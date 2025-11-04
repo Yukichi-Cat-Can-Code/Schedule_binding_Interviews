@@ -2,7 +2,6 @@
 MongoDB Helper Module
 Provides utility functions and base class for MongoDB operations
 """
-from django.conf import settings
 from bson import ObjectId
 from datetime import datetime
 from typing import List, Dict, Optional
@@ -10,9 +9,10 @@ from typing import List, Dict, Optional
 
 def get_collection(collection_name: str):
     """Get MongoDB collection"""
-    if not settings.mongodb:
+    from interview_scheduler.settings import mongodb
+    if not mongodb:
         raise Exception("MongoDB not connected. Check MONGODB_URI in .env")
-    return settings.mongodb[collection_name]
+    return mongodb[collection_name]
 
 
 def serialize_doc(doc: Dict) -> Dict:
