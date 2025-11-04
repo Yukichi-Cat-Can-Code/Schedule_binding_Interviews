@@ -1,0 +1,23 @@
+import { Routes, Route } from "react-router-dom";
+import Layout from "./components/Layout";
+import Dashboard from "./pages/Dashboard";
+import DataManagement from "./pages/DataManagement";
+import AlgorithmSettings from "./pages/AlgorithmSettings";
+import ScheduleView from "./pages/ScheduleView";
+import Comparison from "./pages/Comparison";
+
+function App() {
+  return (
+    <Routes>
+      <Route path="/" element={<Layout />}>
+        <Route index element={<Dashboard />} />
+        <Route path="data" element={<DataManagement />} />
+        <Route path="config" element={<AlgorithmSettings />} />
+        <Route path="schedule" element={<ScheduleView />} />
+        <Route path="compare" element={<Comparison />} />
+      </Route>
+    </Routes>
+  );
+}
+
+export default App;

@@ -1,0 +1,26 @@
+# Django Core (Python 3.13 compatible)
+Django==4.2.16
+djangorestframework==3.15.2
+django-cors-headers==4.4.0
+drf-spectacular==0.27.2
+
+# MongoDB - PyMongo only (Djongo not compatible with Python 3.13)
+pymongo==4.10.1
+dnspython==2.7.0
+
+# Data Processing (Python 3.13 compatible)
+numpy>=2.0.0
+pandas>=2.2.0
+openpyxl==3.1.5
+
+# Utilities
+python-decouple==3.8
+python-dotenv==1.0.1
+
+# Optional: Celery for async tasks (if needed)
+celery==5.4.0
+redis==5.2.0
+
+# Testing
+pytest==8.3.3
+pytest-django==4.9.0
