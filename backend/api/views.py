@@ -20,6 +20,24 @@ from scheduler.genetic_algorithm import GeneticAlgorithm
 from scheduler.greedy_algorithm import GreedyScheduler
 from scheduler.simulated_annealing import SimulatedAnnealing
 
+# Utilities
+def to_json_safe(value):
+    """Recursively convert ObjectId and datetime to JSON-safe primitives."""
+    from bson import ObjectId
+    from datetime import datetime as _dt
+
+    if isinstance(value, dict):
+        return {k: to_json_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [to_json_safe(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(to_json_safe(v) for v in value)
+    if isinstance(value, ObjectId):
+        return str(value)
+    if isinstance(value, _dt):
+        return value.isoformat()
+    return value
+
 
 def normalize_data(items):
     """Add 'id' alias for '_id' to make data compatible with schedulers"""
@@ -144,7 +162,27 @@ class ScheduleAPIView(APIView):
                 return Response(schedule)
             return Response({'error': 'Schedule not found'}, status=status.HTTP_404_NOT_FOUND)
         
+        # Enrich schedules with related details for frontend table view
         schedules = Schedule.find_all()
+        if not schedules:
+            return Response([])
+        
+        # Build lookup maps
+        applicants = {a.get('_id'): a for a in Applicant.find_all()}
+        interviewers = {i.get('_id'): i for i in Interviewer.find_all()}
+        rooms = {r.get('_id'): r for r in Room.find_all()}
+        
+        for s in schedules:
+            aid = s.get('applicant_id')
+            iid = s.get('interviewer_id')
+            rid = s.get('room_id')
+            s['applicant_detail'] = applicants.get(aid)
+            s['interviewer_detail'] = interviewers.get(iid)
+            s['room_detail'] = rooms.get(rid)
+            # default status if missing
+            if 'status' not in s:
+                s['status'] = 'scheduled'
+        
         return Response(schedules)
     
     def post(self, request):
@@ -174,22 +212,39 @@ def get_schedule_timeline(request):
     """Get schedules formatted for timeline view"""
     try:
         schedules = Schedule.find_all()
+        if not schedules:
+            return Response({})
         
-        # Format for timeline/calendar view
-        timeline_data = []
-        for schedule in schedules:
-            timeline_data.append({
-                'id': schedule.get('_id'),
-                'title': schedule.get('applicant_name', 'Interview'),
-                'start': schedule.get('start_time'),
-                'end': schedule.get('end_time'),
-                'applicant_id': schedule.get('applicant_id'),
-                'interviewer_id': schedule.get('interviewer_id'),
-                'room_id': schedule.get('room_id'),
-                'status': schedule.get('status', 'scheduled'),
+        # Preload lookups
+        applicants = {a.get('_id'): a for a in Applicant.find_all()}
+        interviewers = {i.get('_id'): i for i in Interviewer.find_all()}
+        rooms = {r.get('_id'): r for r in Room.find_all()}
+        
+        # Group by room (use room code/name if available)
+        timeline_grouped = {}
+        for s in schedules:
+            rid = s.get('room_id')
+            room = rooms.get(rid) or {}
+            room_key = room.get('room_code') or room.get('room_name') or rid
+            if room_key not in timeline_grouped:
+                timeline_grouped[room_key] = []
+            
+            aid = s.get('applicant_id')
+            iid = s.get('interviewer_id')
+            applicant = applicants.get(aid) or {}
+            interviewer = interviewers.get(iid) or {}
+            
+            timeline_grouped[room_key].append({
+                'id': s.get('_id'),
+                'applicant': applicant.get('full_name', 'Applicant'),
+                'interviewer': interviewer.get('full_name', 'Interviewer'),
+                'position': applicant.get('position') or s.get('position'),
+                'start': s.get('start_time'),
+                'end': s.get('end_time'),
+                'status': s.get('status', 'scheduled'),
             })
         
-        return Response(timeline_data)
+        return Response(timeline_grouped)
     except Exception as e:
         print(f"Error in get_schedule_timeline: {str(e)}")
         return Response(
@@ -398,9 +453,13 @@ def run_genetic_algorithm(request):
         }
         
         result_id = ScheduleResult.create(result_data)
-        result = ScheduleResult.find_by_id(result_id)
+        # Return JSON-safe payload without nested ObjectId by avoiding re-fetch
+        safe_result = {
+            'id': result_id,
+            **result_data
+        }
         
-        return Response(result)
+        return Response(to_json_safe(safe_result))
     
     except Exception as e:
         return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -471,9 +530,12 @@ def run_greedy_algorithm(request):
         }
         
         result_id = ScheduleResult.create(result_data)
-        result = ScheduleResult.find_by_id(result_id)
+        safe_result = {
+            'id': result_id,
+            **result_data
+        }
         
-        return Response(result)
+        return Response(to_json_safe(safe_result))
     
     except Exception as e:
         return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -546,9 +608,12 @@ def run_simulated_annealing(request):
         }
         
         result_id = ScheduleResult.create(result_data)
-        result = ScheduleResult.find_by_id(result_id)
+        safe_result = {
+            'id': result_id,
+            **result_data
+        }
         
-        return Response(result)
+        return Response(to_json_safe(safe_result))
     
     except Exception as e:
         return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
