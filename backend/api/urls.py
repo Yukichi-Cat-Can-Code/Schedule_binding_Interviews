@@ -41,6 +41,7 @@ urlpatterns = [
     
     # Algorithms
     path('algorithm/genetic/', views.run_genetic_algorithm, name='run-genetic'),
+    path('algorithm/genetic-variant/', views.run_genetic_algorithm_variant, name='run-genetic-variant'),
     path('algorithm/greedy/', views.run_greedy_algorithm, name='run-greedy'),
     path('algorithm/simulated-annealing/', views.run_simulated_annealing, name='run-sa'),
     path('algorithm/compare/', views.compare_algorithms, name='compare-algorithms'),

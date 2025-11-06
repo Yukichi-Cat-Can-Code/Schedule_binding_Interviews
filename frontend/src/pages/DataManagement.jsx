@@ -15,6 +15,15 @@ const DataManagement = () => {
   const [activeTab, setActiveTab] = useState("applicants");
   const [isUploading, setIsUploading] = useState(false);
   const queryClient = useQueryClient();
+  // Active session (for per-session import/export)
+  const { data: activeSession } = useQuery({
+    queryKey: ["sessions", "active"],
+    queryFn: () =>
+      sessionsAPI
+        .getActive()
+        .then((res) => res.data)
+        .catch(() => null),
+  });
 
   const tabs = [
     { id: "applicants", label: "Applicants" },
@@ -31,7 +40,7 @@ const DataManagement = () => {
 
     setIsUploading(true);
     try {
-      await dataAPI.importExcel(file, "all");
+      await dataAPI.importExcel(file, "all", activeSession?._id);
       toast.success("Data imported successfully!");
       queryClient.invalidateQueries();
     } catch (error) {
@@ -44,11 +53,16 @@ const DataManagement = () => {
   // Export Excel
   const handleExport = async () => {
     try {
-      const response = await dataAPI.exportExcel();
+      const response = await dataAPI.exportExcel(activeSession?._id);
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement("a");
       link.href = url;
-      link.setAttribute("download", "interview_data.xlsx");
+      link.setAttribute(
+        "download",
+        activeSession?.code
+          ? `schedules_${activeSession.code}.xlsx`
+          : "interview_data.xlsx"
+      );
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -178,6 +192,12 @@ const ApplicantsTable = () => {
   const { data: applicants, isLoading } = useQuery({
     queryKey: ["applicants"],
     queryFn: () => applicantsAPI.getAll().then((res) => res.data),
+  });
+
+  // Dynamic positions
+  const { data: positions } = useQuery({
+    queryKey: ["positions", "active"],
+    queryFn: () => positionsAPI.getAll().then((res) => res.data),
   });
 
   const addMutation = useMutation({
@@ -403,9 +423,18 @@ const ApplicantsTable = () => {
                   }
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  <option value="Media">Media</option>
-                  <option value="HR">HR</option>
-                  <option value="Event">Event</option>
+                  {(positions?.length
+                    ? positions
+                    : [
+                        { _id: "Media", code: "Media", name: "Media" },
+                        { _id: "HR", code: "HR", name: "HR" },
+                        { _id: "Event", code: "Event", name: "Event" },
+                      ]
+                  ).map((p) => (
+                    <option key={p._id || p.code} value={p.code}>
+                      {p.name || p.code}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div className="flex justify-end space-x-3 mt-6">
@@ -454,6 +483,12 @@ const InterviewersTable = () => {
   const { data: interviewers, isLoading } = useQuery({
     queryKey: ["interviewers"],
     queryFn: () => interviewersAPI.getAll().then((res) => res.data),
+  });
+
+  // Dynamic positions
+  const { data: positions } = useQuery({
+    queryKey: ["positions", "active"],
+    queryFn: () => positionsAPI.getAll().then((res) => res.data),
   });
 
   const addMutation = useMutation({
@@ -652,9 +687,18 @@ const InterviewersTable = () => {
                   }
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  <option value="Media">Media</option>
-                  <option value="HR">HR</option>
-                  <option value="Event">Event</option>
+                  {(positions?.length
+                    ? positions
+                    : [
+                        { _id: "Media", code: "Media", name: "Media" },
+                        { _id: "HR", code: "HR", name: "HR" },
+                        { _id: "Event", code: "Event", name: "Event" },
+                      ]
+                  ).map((p) => (
+                    <option key={p._id || p.code} value={p.code}>
+                      {p.name || p.code}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div>
@@ -748,6 +792,12 @@ const RoomsTable = () => {
   const { data: rooms, isLoading } = useQuery({
     queryKey: ["rooms"],
     queryFn: () => roomsAPI.getAll().then((res) => res.data),
+  });
+
+  // Dynamic positions for preferred_position
+  const { data: positions } = useQuery({
+    queryKey: ["positions", "active"],
+    queryFn: () => positionsAPI.getAll().then((res) => res.data),
   });
 
   const addMutation = useMutation({
@@ -978,9 +1028,18 @@ const RoomsTable = () => {
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="">None</option>
-                  <option value="Media">Media</option>
-                  <option value="HR">HR</option>
-                  <option value="Event">Event</option>
+                  {(positions?.length
+                    ? positions
+                    : [
+                        { _id: "Media", code: "Media", name: "Media" },
+                        { _id: "HR", code: "HR", name: "HR" },
+                        { _id: "Event", code: "Event", name: "Event" },
+                      ]
+                  ).map((p) => (
+                    <option key={p._id || p.code} value={p.code}>
+                      {p.name || p.code}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div className="flex justify-end space-x-3 mt-6">

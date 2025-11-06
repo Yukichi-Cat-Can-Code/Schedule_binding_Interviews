@@ -52,9 +52,9 @@ export const roomsAPI = {
 
 // Schedules
 export const schedulesAPI = {
-  getAll: () => api.get("/schedules/"),
+  getAll: (params) => api.get("/schedules/", { params }),
   getById: (id) => api.get(`/schedules/${id}/`),
-  getTimeline: () => api.get("/schedules/timeline/"),
+  getTimeline: (params) => api.get("/schedules/timeline/", { params }),
   getConflicts: () => api.get("/schedules/conflicts/"),
   create: (data) => api.post("/schedules/", data),
   update: (id, data) => api.put(`/schedules/${id}/`, data),
@@ -63,15 +63,20 @@ export const schedulesAPI = {
 
 // Data Management
 export const dataAPI = {
-  importExcel: (file, sheetType) => {
+  importExcel: (file, sheetType, sessionId) => {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("type", sheetType);
+    if (sessionId) formData.append("session_id", sessionId);
     return api.post("/data/import/", formData, {
       headers: { "Content-Type": "multipart/form-data" },
     });
   },
-  exportExcel: () => api.get("/data/export/", { responseType: "blob" }),
+  exportExcel: (sessionId) =>
+    api.get("/data/export/", {
+      responseType: "blob",
+      params: sessionId ? { session_id: sessionId } : {},
+    }),
   getStatistics: () => api.get("/data/statistics/"),
 };
 
@@ -98,6 +103,8 @@ export const sessionsAPI = {
 // Algorithms
 export const algorithmsAPI = {
   runGenetic: (config) => api.post("/algorithm/genetic/", { config }),
+  runGeneticVariant: (config) =>
+    api.post("/algorithm/genetic-variant/", { config }),
   runGreedy: (config) => api.post("/algorithm/greedy/", { config }),
   runSimulatedAnnealing: (config) =>
     api.post("/algorithm/simulated-annealing/", { config }),
@@ -107,6 +114,7 @@ export const algorithmsAPI = {
     // Map algorithm type to correct endpoint
     const algorithmMap = {
       GA: () => api.post("/algorithm/genetic/", { config }),
+      GA2: () => api.post("/algorithm/genetic-variant/", { config }),
       GREEDY: () => api.post("/algorithm/greedy/", { config }),
       SA: () => api.post("/algorithm/simulated-annealing/", { config }),
     };

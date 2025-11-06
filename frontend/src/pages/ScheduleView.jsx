@@ -1,20 +1,53 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { schedulesAPI } from "../services/api";
+import { schedulesAPI, sessionsAPI, positionsAPI } from "../services/api";
 import { format, parseISO } from "date-fns";
 import { FiAlertCircle } from "react-icons/fi";
 
 const ScheduleView = () => {
   const [viewMode, setViewMode] = useState("timeline"); // timeline | table
+  const [selectedSessionId, setSelectedSessionId] = useState("");
+
+  // Sessions
+  const { data: sessions } = useQuery({
+    queryKey: ["sessions"],
+    queryFn: () => sessionsAPI.getAll().then((res) => res.data),
+  });
+
+  const { data: activeSession } = useQuery({
+    queryKey: ["sessions", "active"],
+    queryFn: () => sessionsAPI.getActive().then((res) => res.data),
+  });
+
+  useEffect(() => {
+    if (activeSession?._id && !selectedSessionId) {
+      setSelectedSessionId(activeSession._id);
+    }
+  }, [activeSession, selectedSessionId]);
+
+  // Positions for code->name mapping
+  const { data: positions } = useQuery({
+    queryKey: ["positions"],
+    queryFn: () => positionsAPI.getAll().then((res) => res.data),
+  });
+  const positionMap = useMemo(() => {
+    const map = {};
+    (positions || []).forEach((p) => (map[p.code] = p.name));
+    return map;
+  }, [positions]);
+
+  const params = selectedSessionId
+    ? { session_id: selectedSessionId }
+    : undefined;
 
   const { data: schedules, isLoading } = useQuery({
-    queryKey: ["schedules"],
-    queryFn: () => schedulesAPI.getAll().then((res) => res.data),
+    queryKey: ["schedules", params?.session_id || "all"],
+    queryFn: () => schedulesAPI.getAll(params).then((res) => res.data),
   });
 
   const { data: timeline } = useQuery({
-    queryKey: ["timeline"],
-    queryFn: () => schedulesAPI.getTimeline().then((res) => res.data),
+    queryKey: ["timeline", params?.session_id || "all"],
+    queryFn: () => schedulesAPI.getTimeline(params).then((res) => res.data),
   });
 
   const { data: conflicts } = useQuery({
@@ -40,7 +73,21 @@ const ScheduleView = () => {
             View and manage interview schedules
           </p>
         </div>
-        <div className="flex space-x-2">
+        <div className="flex items-center space-x-3">
+          {/* Session Filter */}
+          <select
+            className="px-3 py-2 border rounded-md text-sm"
+            value={selectedSessionId}
+            onChange={(e) => setSelectedSessionId(e.target.value)}
+          >
+            <option value="">All sessions</option>
+            {(sessions || []).map((s) => (
+              <option key={s._id} value={s._id}>
+                {s.name || s.code || s._id}
+              </option>
+            ))}
+          </select>
+          {/* View Switch */}
           <button
             onClick={() => setViewMode("timeline")}
             className={`px-4 py-2 rounded-lg font-medium transition-colors ${
@@ -92,16 +139,16 @@ const ScheduleView = () => {
       {/* Content */}
       <div className="bg-white rounded-lg shadow p-6">
         {viewMode === "timeline" ? (
-          <TimelineView timeline={timeline} />
+          <TimelineView timeline={timeline} positionMap={positionMap} />
         ) : (
-          <TableView schedules={schedules} />
+          <TableView schedules={schedules} positionMap={positionMap} />
         )}
       </div>
     </div>
   );
 };
 
-const TimelineView = ({ timeline }) => {
+const TimelineView = ({ timeline, positionMap }) => {
   if (!timeline || Object.keys(timeline).length === 0) {
     return (
       <div className="text-center py-12 text-gray-500">
@@ -116,62 +163,74 @@ const TimelineView = ({ timeline }) => {
     Event: "bg-purple-500",
   };
 
+  // Sort rooms and slots by start time ascending
+  const sortedRooms = Object.entries(timeline).sort(([a], [b]) =>
+    String(a).localeCompare(String(b))
+  );
+
   return (
     <div className="space-y-6">
       <h3 className="text-lg font-semibold">Timeline by Room</h3>
-      {Object.entries(timeline).map(([roomId, slots]) => (
-        <div key={roomId} className="border rounded-lg p-4">
-          <h4 className="font-medium text-gray-900 mb-3">{roomId}</h4>
-          <div className="space-y-2">
-            {slots.map((slot) => (
-              <div
-                key={slot.id}
-                className="timeline-slot p-3 rounded-lg border-l-4 bg-gray-50 hover:bg-gray-100 cursor-pointer"
-                style={{
-                  borderLeftColor: positionColors[slot.position] || "#9ca3af",
-                }}
-              >
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <p className="font-medium text-gray-900">
-                      {slot.applicant}
-                    </p>
-                    <p className="text-sm text-gray-600">
-                      Interviewer: {slot.interviewer}
-                    </p>
-                    <p className="text-sm text-gray-600">
-                      Position:{" "}
-                      <span className="font-medium">{slot.position}</span>
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-sm font-medium text-gray-900">
-                      {format(parseISO(slot.start), "HH:mm")} -{" "}
-                      {format(parseISO(slot.end), "HH:mm")}
-                    </p>
-                    <span
-                      className={`inline-block px-2 py-1 text-xs rounded-full mt-1 ${
-                        slot.status === "scheduled"
-                          ? "bg-green-100 text-green-800"
-                          : slot.status === "completed"
-                          ? "bg-blue-100 text-blue-800"
-                          : "bg-gray-100 text-gray-800"
-                      }`}
-                    >
-                      {slot.status}
-                    </span>
+      {sortedRooms.map(([roomId, slots]) => {
+        const sortedSlots = [...slots].sort(
+          (s1, s2) => new Date(s1.start) - new Date(s2.start)
+        );
+        return (
+          <div key={roomId} className="border rounded-lg p-4">
+            <h4 className="font-medium text-gray-900 mb-3">{roomId}</h4>
+            <div className="space-y-2">
+              {sortedSlots.map((slot) => (
+                <div
+                  key={slot.id}
+                  className="timeline-slot p-3 rounded-lg border-l-4 bg-gray-50 hover:bg-gray-100 cursor-pointer"
+                  style={{
+                    borderLeftColor: positionColors[slot.position] || "#9ca3af",
+                  }}
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <p className="font-medium text-gray-900">
+                        {slot.applicant}
+                      </p>
+                      <p className="text-sm text-gray-600">
+                        Interviewer: {slot.interviewer}
+                      </p>
+                      <p className="text-sm text-gray-600">
+                        Position:{" "}
+                        <span className="font-medium">
+                          {positionMap?.[slot.position] || slot.position}
+                        </span>
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-medium text-gray-900">
+                        {format(parseISO(slot.start), "HH:mm")} -{" "}
+                        {format(parseISO(slot.end), "HH:mm")}
+                      </p>
+                      <span
+                        className={`inline-block px-2 py-1 text-xs rounded-full mt-1 ${
+                          slot.status === "scheduled"
+                            ? "bg-green-100 text-green-800"
+                            : slot.status === "completed"
+                            ? "bg-blue-100 text-blue-800"
+                            : "bg-gray-100 text-gray-800"
+                        }`}
+                      >
+                        {slot.status}
+                      </span>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 };
 
-const TableView = ({ schedules }) => {
+const TableView = ({ schedules, positionMap }) => {
   if (!schedules || schedules.length === 0) {
     return (
       <div className="text-center py-12 text-gray-500">
@@ -211,7 +270,8 @@ const TableView = ({ schedules }) => {
                     {schedule.applicant_detail?.full_name}
                   </div>
                   <div className="text-sm text-gray-500">
-                    {schedule.applicant_detail?.position}
+                    {positionMap?.[schedule.applicant_detail?.position] ||
+                      schedule.applicant_detail?.position}
                   </div>
                 </div>
               </td>

@@ -17,6 +17,7 @@ from api.mongo_models import (
     AlgorithmConfig, ScheduleResult
 )
 from scheduler.genetic_algorithm import GeneticAlgorithm
+from scheduler.genetic_algorithm_variant import GeneticAlgorithmVariant
 from scheduler.greedy_algorithm import GreedyScheduler
 from scheduler.simulated_annealing import SimulatedAnnealing
 
@@ -45,6 +46,92 @@ def normalize_data(items):
         if '_id' in item:
             item['id'] = item['_id']
     return items
+
+
+def _get_active_session_or_none():
+    try:
+        return InterviewSession.get_active_session()
+    except Exception:
+        return None
+
+
+def _parse_iso(dt_str):
+    try:
+        return datetime.fromisoformat(dt_str)
+    except Exception:
+        return None
+
+
+def _overlaps(a_start, a_end, b_start, b_end) -> bool:
+    return a_start < b_end and b_start < a_end
+
+
+def _filter_by_session_constraints(schedule_data, current_session):
+    """Apply session constraints before saving:
+    - No overlap with schedules of other sessions that time-overlap current session window
+    - Interviewer cannot work more than 8h continuously per day in current session
+    Returns filtered list and stats.
+    """
+    if not current_session:
+        return schedule_data, {'skipped_conflicts': 0, 'skipped_overtime': 0}
+
+    # Load all schedules to check cross-session conflicts
+    existing = Schedule.find_all()
+    cur_id = current_session.get('_id')
+    start_win = _parse_iso(current_session.get('start_date'))
+    end_win = _parse_iso(current_session.get('end_date'))
+
+    other = []
+    for s in existing:
+        if s.get('session_id') == cur_id:
+            continue
+        s_start = _parse_iso(s.get('start_time'))
+        s_end = _parse_iso(s.get('end_time'))
+        if not s_start or not s_end:
+            continue
+        # keep only those that overlap window
+        if start_win and end_win and _overlaps(s_start, s_end, start_win, end_win):
+            other.append(s)
+
+    # track per-interviewer continuous minutes per day
+    from collections import defaultdict
+    work_minutes = defaultdict(lambda: defaultdict(int))  # interviewer_id -> date -> minutes
+
+    filtered = []
+    skipped_conflicts = 0
+    skipped_overtime = 0
+
+    for entry in schedule_data:
+        ns = _parse_iso(entry.get('start_time'))
+        ne = _parse_iso(entry.get('end_time'))
+        if not ns or not ne:
+            continue
+
+        # Cross-session conflicts (interviewer/room)
+        conflict = False
+        for s in other:
+            if (s.get('interviewer_id') == entry.get('interviewer_id') or
+                s.get('room_id') == entry.get('room_id')):
+                os = _parse_iso(s.get('start_time'))
+                oe = _parse_iso(s.get('end_time'))
+                if os and oe and _overlaps(ns, ne, os, oe):
+                    conflict = True
+                    break
+        if conflict:
+            skipped_conflicts += 1
+            continue
+
+        # 8-hour/day interviewer rule inside current session
+        key_day = ns.date().isoformat()
+        iv = entry.get('interviewer_id')
+        minutes = int((ne - ns).total_seconds() // 60)
+        if work_minutes[iv][key_day] + minutes > 8 * 60:
+            skipped_overtime += 1
+            continue
+        work_minutes[iv][key_day] += minutes
+        filtered.append(entry)
+
+    return filtered, {'skipped_conflicts': skipped_conflicts, 'skipped_overtime': skipped_overtime}
 
 
 class ApplicantAPIView(APIView):
@@ -163,7 +250,9 @@ class ScheduleAPIView(APIView):
             return Response({'error': 'Schedule not found'}, status=status.HTTP_404_NOT_FOUND)
         
         # Enrich schedules with related details for frontend table view
-        schedules = Schedule.find_all()
+        session_id = request.query_params.get('session_id')
+        filter_dict = {'session_id': session_id} if session_id else None
+        schedules = Schedule.find_all(filter_dict)
         if not schedules:
             return Response([])
         
@@ -211,7 +300,9 @@ class ScheduleAPIView(APIView):
 def get_schedule_timeline(request):
     """Get schedules formatted for timeline view"""
     try:
-        schedules = Schedule.find_all()
+        session_id = request.query_params.get('session_id')
+        filter_dict = {'session_id': session_id} if session_id else None
+        schedules = Schedule.find_all(filter_dict)
         if not schedules:
             return Response({})
         
@@ -258,28 +349,67 @@ def import_excel(request):
     """Import data from Excel file"""
     try:
         file = request.FILES.get('file')
-        data_type = request.data.get('type')  # 'applicants', 'interviewers', 'rooms'
+        data_type = request.data.get('type')  # 'applicants', 'interviewers', 'rooms', 'all'
+        session_id = request.data.get('session_id')
         
         if not file:
             return Response({'error': 'No file provided'}, status=status.HTTP_400_BAD_REQUEST)
         
-        # Read Excel file
-        df = pd.read_excel(file)
-        records = df.to_dict('records')
-        
-        # Import based on type
-        if data_type == 'applicants':
-            Applicant.bulk_create(records)
-        elif data_type == 'interviewers':
-            Interviewer.bulk_create(records)
-        elif data_type == 'rooms':
-            Room.bulk_create(records)
+        created_ids = { 'applicants': [], 'interviewers': [], 'rooms': [] }
+        total_counts = { 'applicants': 0, 'interviewers': 0, 'rooms': 0 }
+
+        if data_type == 'all':
+            # Expect sheets named Applicants, Interviewers, Rooms
+            xls = pd.ExcelFile(file)
+            sheets = {name.lower(): name for name in xls.sheet_names}
+
+            if 'applicants' in sheets:
+                df = pd.read_excel(xls, sheets['applicants'])
+                records = df.to_dict('records')
+                created_ids['applicants'] = Applicant.bulk_create(records)
+                total_counts['applicants'] = len(records)
+            if 'interviewers' in sheets:
+                df = pd.read_excel(xls, sheets['interviewers'])
+                records = df.to_dict('records')
+                created_ids['interviewers'] = Interviewer.bulk_create(records)
+                total_counts['interviewers'] = len(records)
+            if 'rooms' in sheets:
+                df = pd.read_excel(xls, sheets['rooms'])
+                records = df.to_dict('records')
+                created_ids['rooms'] = Room.bulk_create(records)
+                total_counts['rooms'] = len(records)
+        elif data_type in ('applicants','interviewers','rooms'):
+            df = pd.read_excel(file)
+            records = df.to_dict('records')
+            if data_type == 'applicants':
+                created_ids['applicants'] = Applicant.bulk_create(records)
+                total_counts['applicants'] = len(records)
+            elif data_type == 'interviewers':
+                created_ids['interviewers'] = Interviewer.bulk_create(records)
+                total_counts['interviewers'] = len(records)
+            elif data_type == 'rooms':
+                created_ids['rooms'] = Room.bulk_create(records)
+                total_counts['rooms'] = len(records)
         else:
             return Response({'error': 'Invalid data type'}, status=status.HTTP_400_BAD_REQUEST)
-        
+
+        # If session_id provided, associate created IDs with the session
+        if session_id:
+            coll = InterviewSession.get_collection()
+            update = {}
+            if created_ids['applicants']:
+                update.setdefault('$addToSet', {}).setdefault('applicant_ids', {'$each': created_ids['applicants']})
+            if created_ids['interviewers']:
+                update.setdefault('$addToSet', {}).setdefault('interviewer_ids', {'$each': created_ids['interviewers']})
+            if created_ids['rooms']:
+                update.setdefault('$addToSet', {}).setdefault('room_ids', {'$each': created_ids['rooms']})
+            if update:
+                coll.update_one({'_id': ObjectId(session_id)}, update)
+
         return Response({
-            'message': f'Successfully imported {len(records)} {data_type}',
-            'count': len(records)
+            'message': 'Import completed',
+            'counts': total_counts,
+            'session_updated': bool(session_id)
         })
     
     except Exception as e:
@@ -294,7 +424,9 @@ def export_schedules(request):
         import io
         
         # Get all schedules
-        schedules = Schedule.find_all()
+        session_id = request.query_params.get('session_id')
+        filter_dict = {'session_id': session_id} if session_id else None
+        schedules = Schedule.find_all(filter_dict)
         
         if not schedules:
             return Response({'error': 'No schedules to export'}, status=status.HTTP_404_NOT_FOUND)
@@ -333,24 +465,24 @@ def export_schedules(request):
 def dashboard_stats(request):
     """Get dashboard statistics"""
     try:
-        from interview_scheduler.settings import mongodb
-        
-        if mongodb is None:
-            return Response(
-                {'error': 'MongoDB not connected'},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE
-            )
-        
+        # Dynamic positions-based stats
+        positions = Position.find_all({'is_active': True})
+        pos_counts_app = {}
+        pos_counts_int = {}
+        for p in positions:
+            code = p.get('code')
+            name = p.get('name')
+            pos_counts_app[name or code] = Applicant.count({'position': code})
+            pos_counts_int[name or code] = Interviewer.count({'position': code})
+
         stats = {
             'applicants': {
                 'total': Applicant.count(),
-                'Media': Applicant.count({'position': 'Media'}),
-                'HR': Applicant.count({'position': 'HR'}),
-                'Event': Applicant.count({'position': 'Event'}),
+                'by_position': pos_counts_app,
             },
             'interviewers': {
                 'total': Interviewer.count(),
-                'available': Interviewer.count(),
+                'by_position': pos_counts_int,
             },
             'rooms': {
                 'total': Room.count(),
@@ -423,12 +555,24 @@ def run_genetic_algorithm(request):
                     print(f"📊 Views: Error converting gene {i}: {e}")
             print(f"📊 Views: Conversion complete. schedule_data length = {len(schedule_data)}")
         
-        # Save schedules to Schedule collection (only if best solution exists)
+        # Apply session-aware constraints and save schedules
         schedule_ids = []
         if schedule_data:
+            active_session = _get_active_session_or_none()
+            if active_session:
+                for e in schedule_data:
+                    e['session_id'] = active_session.get('_id')
+            filtered_data, stats = _filter_by_session_constraints(schedule_data, active_session)
+            print(f"🧹 [GA] Filtered schedules: kept={len(filtered_data)}, skipped_conflicts={stats['skipped_conflicts']}, skipped_overtime={stats['skipped_overtime']}")
+            schedule_data = filtered_data
+
+        if schedule_data:
             print(f"💾 Saving {len(schedule_data)} schedules to database...")
-            # Clear old schedules
-            Schedule.delete_all()
+            # Clear old schedules in current session only (if any)
+            if 'active_session' in locals() and active_session:
+                Schedule.delete_all({'session_id': active_session.get('_id')})
+            else:
+                Schedule.delete_all()
             
             for schedule_entry in schedule_data:
                 schedule_id = Schedule.create(schedule_entry)
@@ -461,6 +605,84 @@ def run_genetic_algorithm(request):
         
         return Response(to_json_safe(safe_result))
     
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+def run_genetic_algorithm_variant(request):
+    """Run Genetic Algorithm Variant (GA2) for scheduling"""
+    try:
+        config = request.data.get('config', {})
+        applicants = normalize_data(Applicant.find_all())
+        interviewers = normalize_data(Interviewer.find_all())
+        rooms = normalize_data(Room.find_all())
+
+        if not applicants or not interviewers or not rooms:
+            return Response({'error': 'Insufficient data. Need applicants, interviewers, and rooms.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        start_time = time.time()
+        ga2 = GeneticAlgorithmVariant(config=config)
+        result = ga2.evolve(applicants, interviewers, rooms)
+
+        best_chromosome = result.get('best_solution')
+        best_fitness = result.get('final_fitness', 0)
+        generations = result.get('generations', 0)
+        execution_time = time.time() - start_time
+
+        schedule_data = []
+        if best_chromosome and hasattr(best_chromosome, 'genes'):
+            for gene in best_chromosome.genes:
+                schedule_data.append({
+                    'applicant_id': gene.applicant_id,
+                    'interviewer_id': gene.interviewer_id,
+                    'room_id': gene.room_id,
+                    'start_time': gene.start_time.isoformat() if hasattr(gene.start_time, 'isoformat') else str(gene.start_time),
+                    'end_time': gene.end_time.isoformat() if hasattr(gene.end_time, 'isoformat') else str(gene.end_time),
+                    'position': gene.position
+                })
+
+        # Apply session-aware constraints and save
+        schedule_ids = []
+        if schedule_data:
+            active_session = _get_active_session_or_none()
+            if active_session:
+                for e in schedule_data:
+                    e['session_id'] = active_session.get('_id')
+            filtered_data, stats = _filter_by_session_constraints(schedule_data, active_session)
+            print(f"🧹 [GA2] Filtered schedules: kept={len(filtered_data)}, skipped_conflicts={stats['skipped_conflicts']}, skipped_overtime={stats['skipped_overtime']}")
+            schedule_data = filtered_data
+
+        if schedule_data:
+            print(f"💾 [GA2] Saving {len(schedule_data)} schedules to database...")
+            if 'active_session' in locals() and active_session:
+                Schedule.delete_all({'session_id': active_session.get('_id')})
+            else:
+                Schedule.delete_all()
+            for schedule_entry in schedule_data:
+                schedule_id = Schedule.create(schedule_entry)
+                schedule_ids.append(str(schedule_id))
+            print(f"✅ [GA2] Saved {len(schedule_ids)} schedules")
+
+        result_data = {
+            'algorithm': 'GA2',
+            'fitness_score': best_fitness,
+            'conflict_score': best_chromosome.conflict_score if best_chromosome else 0,
+            'idle_time_score': best_chromosome.idle_time_score if best_chromosome else 0,
+            'fairness_score': best_chromosome.fairness_score if best_chromosome else 0,
+            'matching_score': best_chromosome.matching_score if best_chromosome else 0,
+            'room_usage_score': best_chromosome.room_usage_score if best_chromosome else 0,
+            'execution_time': execution_time,
+            'generations': generations,
+            'schedule_data': schedule_data,
+            'schedule_ids': schedule_ids,
+            'config_used': config,
+            'created_at': datetime.now()
+        }
+
+        result_id = ScheduleResult.create(result_data)
+        safe_result = {'id': result_id, **result_data}
+        return Response(to_json_safe(safe_result))
     except Exception as e:
         return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -502,11 +724,23 @@ def run_greedy_algorithm(request):
                     'position': gene.position
                 })
         
-        # Save schedules to Schedule collection
+        # Apply session-aware constraints and save schedules
         schedule_ids = []
         if schedule_data:
+            active_session = _get_active_session_or_none()
+            if active_session:
+                for e in schedule_data:
+                    e['session_id'] = active_session.get('_id')
+            filtered_data, stats = _filter_by_session_constraints(schedule_data, active_session)
+            print(f"🧹 [GREEDY] Filtered schedules: kept={len(filtered_data)}, skipped_conflicts={stats['skipped_conflicts']}, skipped_overtime={stats['skipped_overtime']}")
+            schedule_data = filtered_data
+
+        if schedule_data:
             print(f"💾 [GREEDY] Saving {len(schedule_data)} schedules to database...")
-            Schedule.delete_all()
+            if 'active_session' in locals() and active_session:
+                Schedule.delete_all({'session_id': active_session.get('_id')})
+            else:
+                Schedule.delete_all()
             for schedule_entry in schedule_data:
                 schedule_id = Schedule.create(schedule_entry)
                 schedule_ids.append(str(schedule_id))
@@ -580,11 +814,23 @@ def run_simulated_annealing(request):
                     'position': gene.position
                 })
         
-        # Save schedules to Schedule collection
+        # Apply session-aware constraints and save schedules
         schedule_ids = []
         if schedule_data:
+            active_session = _get_active_session_or_none()
+            if active_session:
+                for e in schedule_data:
+                    e['session_id'] = active_session.get('_id')
+            filtered_data, stats = _filter_by_session_constraints(schedule_data, active_session)
+            print(f"🧹 [SA] Filtered schedules: kept={len(filtered_data)}, skipped_conflicts={stats['skipped_conflicts']}, skipped_overtime={stats['skipped_overtime']}")
+            schedule_data = filtered_data
+
+        if schedule_data:
             print(f"💾 [SA] Saving {len(schedule_data)} schedules to database...")
-            Schedule.delete_all()
+            if 'active_session' in locals() and active_session:
+                Schedule.delete_all({'session_id': active_session.get('_id')})
+            else:
+                Schedule.delete_all()
             for schedule_entry in schedule_data:
                 schedule_id = Schedule.create(schedule_entry)
                 schedule_ids.append(str(schedule_id))
@@ -649,7 +895,6 @@ def compare_algorithms(request):
             return Response({
                 'error': 'Insufficient data. Need applicants, interviewers, and rooms.'
             }, status=status.HTTP_400_BAD_REQUEST)
-        
         comparison_results = []
         
         # 1. Run Genetic Algorithm
@@ -683,6 +928,33 @@ def compare_algorithms(request):
             'fairness_score': ga_chromosome.fairness_score if ga_chromosome else 0,
             'matching_score': ga_chromosome.matching_score if ga_chromosome else 0,
             'room_usage_score': ga_chromosome.room_usage_score if ga_chromosome else 0,
+        })
+
+        # 1b. Run Genetic Algorithm Variant (GA2)
+        print("🔄 Running Genetic Algorithm Variant (GA2)...")
+        ga2_start = time.time()
+        ga2_config = config.get('GA2', {
+            'POPULATION_SIZE': 100,
+            'GENERATIONS': 200,
+            'CROSSOVER_RATE': 0.9,
+            'MUTATION_RATE': 0.2,
+            'ELITISM_RATE': 0.05,
+        })
+        ga2 = GeneticAlgorithmVariant(config=ga2_config)
+        ga2_result = ga2.evolve(applicants, interviewers, rooms)
+        ga2_time = time.time() - ga2_start
+
+        ga2_chromosome = ga2_result.get('best_solution')
+        comparison_results.append({
+            'algorithm': 'GA2',
+            'fitness_score': ga2_result.get('final_fitness', 0),
+            'execution_time': ga2_time,
+            'schedules_count': len(ga2_chromosome.genes) if ga2_chromosome else 0,
+            'conflict_score': ga2_chromosome.conflict_score if ga2_chromosome else 0,
+            'idle_time_score': ga2_chromosome.idle_time_score if ga2_chromosome else 0,
+            'fairness_score': ga2_chromosome.fairness_score if ga2_chromosome else 0,
+            'matching_score': ga2_chromosome.matching_score if ga2_chromosome else 0,
+            'room_usage_score': ga2_chromosome.room_usage_score if ga2_chromosome else 0,
         })
         
         # 2. Run Greedy Algorithm

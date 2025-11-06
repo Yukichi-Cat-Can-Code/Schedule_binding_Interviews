@@ -79,24 +79,44 @@ const Dashboard = () => {
         ))}
       </div>
 
-      {/* Position Distribution */}
-      {stats?.applicants && (
-        <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">
-            Applicants by Position
-          </h3>
-          <div className="grid grid-cols-3 gap-4">
-            {Object.entries(stats.applicants)
-              .filter(([key]) => key !== "total")
-              .map(([position, count]) => (
-                <div
-                  key={position}
-                  className="text-center p-4 bg-gray-50 rounded"
-                >
-                  <p className="text-2xl font-bold text-gray-900">{count}</p>
-                  <p className="text-sm text-gray-600">{position}</p>
-                </div>
-              ))}
+      {/* Position Distribution (Applicants & Interviewers) */}
+      {stats?.applicants?.by_position && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="bg-white rounded-lg shadow p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">
+              Applicants by Position
+            </h3>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              {Object.entries(stats.applicants.by_position).map(
+                ([name, count]) => (
+                  <div
+                    key={`app-${name}`}
+                    className="text-center p-4 bg-gray-50 rounded"
+                  >
+                    <p className="text-2xl font-bold text-gray-900">{count}</p>
+                    <p className="text-sm text-gray-600">{name}</p>
+                  </div>
+                )
+              )}
+            </div>
+          </div>
+          <div className="bg-white rounded-lg shadow p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">
+              Interviewers by Position
+            </h3>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              {Object.entries(stats.interviewers.by_position).map(
+                ([name, count]) => (
+                  <div
+                    key={`int-${name}`}
+                    className="text-center p-4 bg-gray-50 rounded"
+                  >
+                    <p className="text-2xl font-bold text-gray-900">{count}</p>
+                    <p className="text-sm text-gray-600">{name}</p>
+                  </div>
+                )
+              )}
+            </div>
           </div>
         </div>
       )}
