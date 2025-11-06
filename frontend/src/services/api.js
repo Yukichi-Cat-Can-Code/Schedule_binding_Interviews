@@ -66,22 +66,54 @@ export const dataAPI = {
   importExcel: (file, sheetType) => {
     const formData = new FormData();
     formData.append("file", file);
-    formData.append("sheet_type", sheetType);
-    return api.post("/data/", formData, {
+    formData.append("type", sheetType);
+    return api.post("/data/import/", formData, {
       headers: { "Content-Type": "multipart/form-data" },
     });
   },
-  exportExcel: () => api.get("/data/", { responseType: "blob" }),
+  exportExcel: () => api.get("/data/export/", { responseType: "blob" }),
   getStatistics: () => api.get("/data/statistics/"),
+};
+
+// Positions
+export const positionsAPI = {
+  getAll: () => api.get("/positions/"),
+  getById: (id) => api.get(`/positions/${id}/`),
+  create: (data) => api.post("/positions/", data),
+  update: (id, data) => api.put(`/positions/${id}/`, data),
+  delete: (id) => api.delete(`/positions/${id}/`),
+};
+
+// Interview Sessions
+export const sessionsAPI = {
+  getAll: () => api.get("/sessions/"),
+  getActive: () => api.get("/sessions/active/"),
+  getById: (id) => api.get(`/sessions/${id}/`),
+  create: (data) => api.post("/sessions/", data),
+  update: (id, data) => api.put(`/sessions/${id}/`, data),
+  delete: (id) => api.delete(`/sessions/${id}/`),
+  activate: (id) => api.post(`/sessions/${id}/activate/`),
 };
 
 // Algorithms
 export const algorithmsAPI = {
-  run: (algorithm, config) =>
-    api.post("/algorithm/run/", { algorithm, config }),
+  runGenetic: (config) => api.post("/algorithm/genetic/", { config }),
+  runGreedy: (config) => api.post("/algorithm/greedy/", { config }),
+  runSimulatedAnnealing: (config) =>
+    api.post("/algorithm/simulated-annealing/", { config }),
+  compare: (config) => api.post("/algorithm/compare/", { config }),
   getResults: () => api.get("/algorithm/results/"),
-  compare: (algorithms, config) =>
-    api.post("/algorithm/compare/", { algorithms, config }),
+  run: (algorithm, config) => {
+    // Map algorithm type to correct endpoint
+    const algorithmMap = {
+      GA: () => api.post("/algorithm/genetic/", { config }),
+      GREEDY: () => api.post("/algorithm/greedy/", { config }),
+      SA: () => api.post("/algorithm/simulated-annealing/", { config }),
+    };
+    return algorithmMap[algorithm]
+      ? algorithmMap[algorithm]()
+      : Promise.reject(new Error("Invalid algorithm type"));
+  },
 };
 
 // Algorithm Configs

@@ -10,7 +10,7 @@ from typing import List, Dict, Optional
 def get_collection(collection_name: str):
     """Get MongoDB collection"""
     from interview_scheduler.settings import mongodb
-    if not mongodb:
+    if mongodb is None:
         raise Exception("MongoDB not connected. Check MONGODB_URI in .env")
     return mongodb[collection_name]
 
@@ -41,10 +41,17 @@ class MongoModel:
         return get_collection(cls.collection_name)
     
     @classmethod
-    def find_all(cls, filter_dict: Dict = None) -> List[Dict]:
-        """Find all documents"""
+    def find_all(cls, filter_dict: Dict = None, limit: int = None, sort: List = None) -> List[Dict]:
+        """Find all documents with optional limit and sort"""
         collection = cls.get_collection()
-        docs = list(collection.find(filter_dict or {}))
+        cursor = collection.find(filter_dict or {})
+        
+        if sort:
+            cursor = cursor.sort(sort)
+        if limit:
+            cursor = cursor.limit(limit)
+            
+        docs = list(cursor)
         return serialize_docs(docs)
     
     @classmethod
@@ -113,3 +120,10 @@ class MongoModel:
         """Count documents"""
         collection = cls.get_collection()
         return collection.count_documents(filter_dict or {})
+    
+    @classmethod
+    def delete_all(cls, filter_dict: Dict = None) -> int:
+        """Delete all documents matching filter (or all if no filter)"""
+        collection = cls.get_collection()
+        result = collection.delete_many(filter_dict or {})
+        return result.deleted_count

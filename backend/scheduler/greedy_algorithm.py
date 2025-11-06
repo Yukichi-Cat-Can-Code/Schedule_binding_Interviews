@@ -1,17 +1,11 @@
-"""
-Greedy Algorithm for Interview Scheduling
-Fast heuristic approach for comparison with GA
-"""
+
 from datetime import datetime, timedelta
 from typing import List, Dict, Tuple
 from scheduler.genetic_algorithm import Gene, Chromosome
+from scheduler.time_parser import TimeParser
 
 
 class GreedyScheduler:
-    """
-    Greedy Algorithm Implementation
-    Strategy: Schedule applicants with least available time first
-    """
     
     def __init__(self, config: Dict):
         self.weights = config.get('WEIGHTS', {
@@ -24,9 +18,7 @@ class GreedyScheduler:
         self.slot_duration = 30  # minutes
     
     def schedule(self, applicants, interviewers, rooms) -> Dict:
-        """
-        Greedy scheduling algorithm
-        """
+
         start_time = datetime.now()
         
         # Sort applicants by available time (ascending) - least flexible first
@@ -82,9 +74,12 @@ class GreedyScheduler:
     
     def _sort_applicants_by_flexibility(self, applicants) -> List:
         """Sort applicants by available time (least flexible first)"""
-        # TODO: Parse available_time and calculate actual flexibility
-        # For now, random sorting as placeholder
-        return sorted(applicants, key=lambda a: len(a.get('available_time', '')))
+        def get_flexibility(applicant):
+            slots = TimeParser.parse_available_time(applicant.get('available_time', ''))
+            total_minutes = sum(slot.duration_minutes() for slot in slots)
+            return total_minutes if total_minutes > 0 else 999  # Put those without time data at end
+        
+        return sorted(applicants, key=get_flexibility)
     
     def _find_best_slot(self, applicant, interviewers, rooms, scheduled_slots) -> Gene:
         """Find best available slot for applicant"""
@@ -147,18 +142,23 @@ class GreedyScheduler:
     
     def _find_earliest_available_slot(self, applicant, interviewer, room, scheduled_slots) -> Tuple:
         """Find earliest time slot that satisfies all constraints"""
-        # TODO: Implement proper time slot finding
-        # Placeholder: return a valid time slot
-        base_time = datetime.now().replace(hour=14, minute=0, second=0, microsecond=0)
+        # Get all possible time slots for applicant
+        applicant_slots = TimeParser.get_time_slots(applicant, self.slot_duration)
         
-        # Try slots every 30 minutes
-        for offset in range(0, 240, 30):
-            start_time = base_time + timedelta(minutes=offset)
-            end_time = start_time + timedelta(minutes=self.slot_duration)
-            
-            # Check if slot is available
+        if not applicant_slots:
+            return None, None
+        
+        # Try each slot in order (earliest first)
+        for start_time, end_time in applicant_slots:
+            # Check if slot is available for interviewer and room
             if self._is_slot_available(start_time, end_time, interviewer, room, scheduled_slots):
-                return start_time, end_time
+                # Also check if interviewer is available at this time
+                interviewer_available = TimeParser.is_time_in_range(
+                    (start_time, end_time),
+                    interviewer.get('available_time', '')
+                )
+                if interviewer_available:
+                    return start_time, end_time
         
         return None, None
     

@@ -1,20 +1,14 @@
-"""
-Simulated Annealing Algorithm for Interview Scheduling
-Metaheuristic optimization approach
-"""
+
 import random
 import math
 from datetime import datetime, timedelta
 from typing import Dict
 from scheduler.genetic_algorithm import Gene, Chromosome
+from scheduler.time_parser import TimeParser
 import copy
 
 
 class SimulatedAnnealing:
-    """
-    Simulated Annealing Implementation
-    Accepts worse solutions with decreasing probability to escape local optima
-    """
     
     def __init__(self, config: Dict):
         self.initial_temp = config.get('INITIAL_TEMP', 1000.0)
@@ -34,9 +28,7 @@ class SimulatedAnnealing:
         self.temperature_history = []
     
     def optimize(self, applicants, interviewers, rooms) -> Dict:
-        """
-        Simulated Annealing optimization
-        """
+
         start_time = datetime.now()
         
         # Initialize with random solution
@@ -96,17 +88,26 @@ class SimulatedAnnealing:
         }
     
     def _random_solution(self, applicants, interviewers, rooms) -> Chromosome:
-        """Generate random initial solution"""
         genes = []
-        base_time = datetime.now().replace(hour=14, minute=0, second=0, microsecond=0)
         
         for applicant in applicants:
             interviewer = random.choice(interviewers)
             room = random.choice(rooms)
             
-            offset = random.randint(0, 8) * 30  # 0-240 minutes
-            start_time = base_time + timedelta(minutes=offset)
-            end_time = start_time + timedelta(minutes=30)
+            # Get random time slot from applicant's available time
+            time_slots = TimeParser.get_time_slots(applicant, slot_duration=30)
+            
+            if time_slots:
+                start_time, end_time = random.choice(time_slots)
+            else:
+                # Fallback if no available time data
+                base_time = datetime.now().replace(hour=14, minute=0, second=0, microsecond=0)
+                days_ahead = 5 - base_time.weekday()
+                if days_ahead <= 0:
+                    days_ahead += 7
+                base_time = base_time + timedelta(days=days_ahead)
+                start_time = base_time
+                end_time = start_time + timedelta(minutes=30)
             
             gene = Gene(
                 applicant_id=applicant['id'],

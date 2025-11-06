@@ -1,8 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import { dataAPI, schedulesAPI } from "../services/api";
 import { FiUsers, FiUserCheck, FiHome, FiCalendar } from "react-icons/fi";
 
 const Dashboard = () => {
+  const navigate = useNavigate();
   const { data: stats, isLoading } = useQuery({
     queryKey: ["statistics"],
     queryFn: () => dataAPI.getStatistics().then((res) => res.data),
@@ -16,25 +18,25 @@ const Dashboard = () => {
   const statCards = [
     {
       title: "Applicants",
-      value: stats?.applicants || 0,
+      value: stats?.applicants?.total || 0,
       icon: FiUsers,
       color: "bg-blue-500",
     },
     {
       title: "Interviewers",
-      value: stats?.interviewers || 0,
+      value: stats?.interviewers?.total || 0,
       icon: FiUserCheck,
       color: "bg-green-500",
     },
     {
       title: "Rooms",
-      value: stats?.rooms || 0,
+      value: stats?.rooms?.total || 0,
       icon: FiHome,
       color: "bg-purple-500",
     },
     {
       title: "Schedules",
-      value: stats?.schedules || 0,
+      value: stats?.schedules?.total || 0,
       icon: FiCalendar,
       color: "bg-orange-500",
     },
@@ -78,21 +80,23 @@ const Dashboard = () => {
       </div>
 
       {/* Position Distribution */}
-      {stats?.positions && (
+      {stats?.applicants && (
         <div className="bg-white rounded-lg shadow p-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">
             Applicants by Position
           </h3>
           <div className="grid grid-cols-3 gap-4">
-            {Object.entries(stats.positions).map(([position, count]) => (
-              <div
-                key={position}
-                className="text-center p-4 bg-gray-50 rounded"
-              >
-                <p className="text-2xl font-bold text-gray-900">{count}</p>
-                <p className="text-sm text-gray-600">{position}</p>
-              </div>
-            ))}
+            {Object.entries(stats.applicants)
+              .filter(([key]) => key !== "total")
+              .map(([position, count]) => (
+                <div
+                  key={position}
+                  className="text-center p-4 bg-gray-50 rounded"
+                >
+                  <p className="text-2xl font-bold text-gray-900">{count}</p>
+                  <p className="text-sm text-gray-600">{position}</p>
+                </div>
+              ))}
           </div>
         </div>
       )}
@@ -132,15 +136,24 @@ const Dashboard = () => {
           Quick Actions
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <button className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors">
+          <button
+            onClick={() => navigate("/data-management")}
+            className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors cursor-pointer"
+          >
             <p className="font-medium text-gray-900">Import Data</p>
             <p className="text-sm text-gray-600 mt-1">Upload Excel file</p>
           </button>
-          <button className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-green-500 hover:bg-green-50 transition-colors">
+          <button
+            onClick={() => navigate("/algorithm-settings")}
+            className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-green-500 hover:bg-green-50 transition-colors cursor-pointer"
+          >
             <p className="font-medium text-gray-900">Run Algorithm</p>
             <p className="text-sm text-gray-600 mt-1">Generate schedule</p>
           </button>
-          <button className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-purple-500 hover:bg-purple-50 transition-colors">
+          <button
+            onClick={() => navigate("/comparison")}
+            className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-purple-500 hover:bg-purple-50 transition-colors cursor-pointer"
+          >
             <p className="font-medium text-gray-900">Compare Results</p>
             <p className="text-sm text-gray-600 mt-1">View analysis</p>
           </button>

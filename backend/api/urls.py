@@ -1,10 +1,17 @@
-"""
-URL routing for API endpoints
-"""
 from django.urls import path
 from api import views
 
 urlpatterns = [
+    # Positions
+    path('positions/', views.PositionAPIView.as_view(), name='position-list'),
+    path('positions/<str:pk>/', views.PositionAPIView.as_view(), name='position-detail'),
+    
+    # Interview Sessions
+    path('sessions/', views.InterviewSessionAPIView.as_view(), name='session-list'),
+    path('sessions/active/', views.get_active_session, name='session-active'),  
+    path('sessions/<str:pk>/', views.InterviewSessionAPIView.as_view(), name='session-detail'),
+    path('sessions/<str:pk>/activate/', views.set_active_session, name='session-activate'),
+    
     # Applicants
     path('applicants/', views.ApplicantAPIView.as_view(), name='applicant-list'),
     path('applicants/<str:pk>/', views.ApplicantAPIView.as_view(), name='applicant-detail'),
@@ -19,6 +26,8 @@ urlpatterns = [
     
     # Schedules
     path('schedules/', views.ScheduleAPIView.as_view(), name='schedule-list'),
+    path('schedules/conflicts/', views.get_schedule_conflicts, name='schedule-conflicts'),  
+    path('schedules/timeline/', views.get_schedule_timeline, name='schedule-timeline'), 
     path('schedules/<str:pk>/', views.ScheduleAPIView.as_view(), name='schedule-detail'),
     
     # Algorithm Config
@@ -27,11 +36,13 @@ urlpatterns = [
     
     # Data Management
     path('data/import/', views.import_excel, name='import-excel'),
+    path('data/export/', views.export_schedules, name='export-schedules'),
     path('data/statistics/', views.dashboard_stats, name='dashboard-stats'),
     
     # Algorithms
     path('algorithm/genetic/', views.run_genetic_algorithm, name='run-genetic'),
     path('algorithm/greedy/', views.run_greedy_algorithm, name='run-greedy'),
     path('algorithm/simulated-annealing/', views.run_simulated_annealing, name='run-sa'),
+    path('algorithm/compare/', views.compare_algorithms, name='compare-algorithms'),
     path('algorithm/results/', views.algorithm_results, name='algorithm-results'),
 ]

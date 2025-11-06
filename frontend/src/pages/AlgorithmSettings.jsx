@@ -335,7 +335,7 @@ const AlgorithmSettings = () => {
             <div className="p-4 bg-blue-50 rounded-lg">
               <p className="text-sm text-gray-600">Fitness Score</p>
               <p className="text-2xl font-bold text-gray-900">
-                {result.fitness?.toFixed(3) || "N/A"}
+                {result.fitness_score?.toFixed(3) || "N/A"}
               </p>
             </div>
             <div className="p-4 bg-green-50 rounded-lg">
@@ -356,41 +356,41 @@ const AlgorithmSettings = () => {
             <div className="p-4 bg-orange-50 rounded-lg">
               <p className="text-sm text-gray-600">Schedules</p>
               <p className="text-2xl font-bold text-gray-900">
-                {result.best_solution?.schedule?.length || 0}
+                {result.schedule_data?.length || 0}
               </p>
             </div>
           </div>
 
-          {result.best_solution && (
+          {result.conflict_score !== undefined && (
             <div className="mt-4 grid grid-cols-5 gap-4">
               <div className="text-center p-3 bg-gray-50 rounded">
                 <p className="text-sm text-gray-600">Conflict</p>
                 <p className="text-lg font-bold">
-                  {(result.best_solution.conflict_score * 100).toFixed(1)}%
+                  {(result.conflict_score * 100).toFixed(1)}%
                 </p>
               </div>
               <div className="text-center p-3 bg-gray-50 rounded">
                 <p className="text-sm text-gray-600">Idle Time</p>
                 <p className="text-lg font-bold">
-                  {(result.best_solution.idle_time_score * 100).toFixed(1)}%
+                  {(result.idle_time_score * 100).toFixed(1)}%
                 </p>
               </div>
               <div className="text-center p-3 bg-gray-50 rounded">
                 <p className="text-sm text-gray-600">Fairness</p>
                 <p className="text-lg font-bold">
-                  {(result.best_solution.fairness_score * 100).toFixed(1)}%
+                  {(result.fairness_score * 100).toFixed(1)}%
                 </p>
               </div>
               <div className="text-center p-3 bg-gray-50 rounded">
                 <p className="text-sm text-gray-600">Matching</p>
                 <p className="text-lg font-bold">
-                  {(result.best_solution.matching_score * 100).toFixed(1)}%
+                  {(result.matching_score * 100).toFixed(1)}%
                 </p>
               </div>
               <div className="text-center p-3 bg-gray-50 rounded">
                 <p className="text-sm text-gray-600">Room Usage</p>
                 <p className="text-lg font-bold">
-                  {(result.best_solution.room_usage_score * 100).toFixed(1)}%
+                  {(result.room_usage_score * 100).toFixed(1)}%
                 </p>
               </div>
             </div>

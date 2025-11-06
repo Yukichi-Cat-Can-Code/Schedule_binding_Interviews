@@ -81,7 +81,7 @@ DATABASES = {
 from pymongo import MongoClient
 
 MONGODB_URI = os.getenv('MONGODB_URI', 'mongodb://localhost:27017/')
-MONGODB_NAME = os.getenv('MONGODB_NAME', 'schedule_interview')
+MONGODB_NAME = os.getenv('MONGODB_DB_NAME', 'schedule_interview') 
 
 try:
     mongo_client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)

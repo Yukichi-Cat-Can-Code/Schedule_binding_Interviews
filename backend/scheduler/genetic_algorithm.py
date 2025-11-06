@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Tuple
 from dataclasses import dataclass
 import copy
+from scheduler.time_parser import TimeParser
 
 
 @dataclass
@@ -79,10 +80,13 @@ class GeneticAlgorithm:
         - 30% Earliest-time-first
         - 40% Random
         """
+        print(f"🧪 Initializing population with {len(applicants)} applicants")
         self.population = []
         
         # Strategy 1: Greedy initialization (30%)
-        for _ in range(int(self.population_size * 0.3)):
+        greedy_count = int(self.population_size * 0.3)
+        print(f"🧪 Creating {greedy_count} greedy chromosomes...")
+        for _ in range(greedy_count):
             chromosome = self._greedy_initialization(applicants, interviewers, rooms, slot_duration)
             self.population.append(chromosome)
         
@@ -129,6 +133,7 @@ class GeneticAlgorithm:
             )
             genes.append(gene)
         
+        print(f"🧪 Greedy chromosome created with {len(genes)} genes")
         return Chromosome(genes)
     
     def _earliest_time_initialization(self, applicants, interviewers, rooms, slot_duration):
@@ -172,20 +177,43 @@ class GeneticAlgorithm:
         return Chromosome(genes)
     
     def _get_available_time_length(self, applicant) -> int:
-        """Calculate available time in minutes (placeholder)"""
-        # TODO: Parse available_time string and calculate
-        return random.randint(60, 240)
+        """Calculate available time in minutes"""
+        slots = TimeParser.parse_available_time(applicant.get('available_time', ''))
+        total_minutes = sum(slot.duration_minutes() for slot in slots)
+        return total_minutes if total_minutes > 0 else 60  # Default 60 if no data
     
     def _get_earliest_slot(self, applicant, interviewer, room, slot_duration) -> Tuple[datetime, datetime]:
-        """Get earliest available time slot (placeholder)"""
-        # TODO: Implement proper time parsing and slot finding
+        """Get earliest available time slot"""
+        # Try preferred time first
+        preferred = TimeParser.get_preferred_slot(applicant, slot_duration)
+        if preferred:
+            return preferred
+        
+        # Get all available slots
+        time_slots = TimeParser.get_time_slots(applicant, slot_duration)
+        
+        if time_slots:
+            # Return first available slot
+            return time_slots[0]
+        
+        # Fallback: generate a default slot
         base_time = datetime.now().replace(hour=14, minute=0, second=0, microsecond=0)
-        start_time = base_time + timedelta(minutes=random.randint(0, 240))
+        days_ahead = 5 - base_time.weekday()
+        if days_ahead <= 0:
+            days_ahead += 7
+        base_time = base_time + timedelta(days=days_ahead)
+        start_time = base_time
         end_time = start_time + timedelta(minutes=slot_duration)
         return start_time, end_time
     
     def _get_random_valid_slot(self, applicant, interviewer, room, slot_duration) -> Tuple[datetime, datetime]:
-        """Get random valid time slot (placeholder)"""
+        """Get random valid time slot from available slots"""
+        time_slots = TimeParser.get_time_slots(applicant, slot_duration)
+        
+        if time_slots:
+            return random.choice(time_slots)
+        
+        # Fallback to earliest slot
         return self._get_earliest_slot(applicant, interviewer, room, slot_duration)
     
     def _calculate_fitness(self, chromosome: Chromosome, applicants, interviewers, rooms):
@@ -358,6 +386,13 @@ class GeneticAlgorithm:
     
     def evolve(self, applicants, interviewers, rooms) -> Dict:
         """Main GA evolution loop"""
+        # Initialize population first
+        print(f"🧬 GA Starting with {len(applicants)} applicants, {len(interviewers)} interviewers, {len(rooms)} rooms")
+        self.initialize_population(applicants, interviewers, rooms)
+        print(f"🧬 Population initialized: {len(self.population)} chromosomes")
+        if self.population:
+            print(f"🧬 First chromosome has {len(self.population[0].genes)} genes")
+        
         for generation in range(self.generations):
             self.current_generation = generation
             
@@ -407,6 +442,9 @@ class GeneticAlgorithm:
             # Progress callback (for real-time updates)
             if generation % 10 == 0:
                 print(f"Generation {generation}/{self.generations} - Best Fitness: {current_best.fitness:.4f}")
+        
+        print(f"🧬 Evolution complete: best_solution has {len(self.best_solution.genes) if self.best_solution else 0} genes")
+        print(f"🧬 Final fitness: {self.best_solution.fitness if self.best_solution else 0}")
         
         return {
             'best_solution': self.best_solution,
