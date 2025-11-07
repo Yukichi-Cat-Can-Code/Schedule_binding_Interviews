@@ -42,8 +42,11 @@ urlpatterns = [
     # Algorithms
     path('algorithm/genetic/', views.run_genetic_algorithm, name='run-genetic'),
     path('algorithm/genetic-variant/', views.run_genetic_algorithm_variant, name='run-genetic-variant'),
-    path('algorithm/greedy/', views.run_greedy_algorithm, name='run-greedy'),
-    path('algorithm/simulated-annealing/', views.run_simulated_annealing, name='run-sa'),
+    path('algorithm/genetic-variant2/', views.run_genetic_algorithm_variant2, name='run-genetic-variant2'),
+    path('algorithm/genetic-variant3/', views.run_genetic_algorithm_variant3, name='run-genetic-variant3'),
+    # Deprecated: Greedy and SA removed in favor of GA variants
     path('algorithm/compare/', views.compare_algorithms, name='compare-algorithms'),
+    path('algorithm/topk/', views.generate_top_schedules, name='generate-topk'),
+    path('algorithm/select/', views.choose_schedule_result, name='choose-schedule-result'),
     path('algorithm/results/', views.algorithm_results, name='algorithm-results'),
 ]

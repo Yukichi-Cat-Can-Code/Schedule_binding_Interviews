@@ -18,26 +18,33 @@ class TimeSlot:
         self.end_minute = end_minute
     
     def to_datetime(self, base_date: datetime = None) -> Tuple[datetime, datetime]:
-        """Convert to datetime objects"""
+        """Convert to datetime objects for the next occurrence of the given weekday"""
+        # Map english weekday names to index
+        weekday_index = {
+            'Monday': 0,
+            'Tuesday': 1,
+            'Wednesday': 2,
+            'Thursday': 3,
+            'Friday': 4,
+            'Saturday': 5,
+            'Sunday': 6,
+        }
         if base_date is None:
-            # Default: next Saturday or Sunday
             base_date = datetime.now()
-            days_ahead = 5 - base_date.weekday()  # Saturday = 5
-            if days_ahead <= 0:
-                days_ahead += 7
-            base_date = base_date + timedelta(days=days_ahead)
-        
-        # Adjust to target day
-        if self.day == 'Sunday':
-            base_date = base_date + timedelta(days=1)
-        
-        start_time = base_date.replace(
+        # Compute next occurrence of target weekday
+        target_idx = weekday_index.get(self.day, base_date.weekday())
+        delta = (target_idx - base_date.weekday()) % 7
+        if delta == 0:
+            delta = 7  # move to next week if today
+        target_date = base_date + timedelta(days=delta)
+
+        start_time = target_date.replace(
             hour=self.start_hour, 
             minute=self.start_minute, 
             second=0, 
             microsecond=0
         )
-        end_time = base_date.replace(
+        end_time = target_date.replace(
             hour=self.end_hour, 
             minute=self.end_minute, 
             second=0, 
@@ -58,11 +65,21 @@ class TimeSlot:
 class TimeParser:
     """Parse Vietnamese time slot strings"""
     
-    # Mapping Vietnamese time slots
-    SLOT_PATTERNS = {
-        'Ca chiều T7': ('Saturday', 13, 30, 18, 0),
-        'Ca tối T7': ('Saturday', 18, 30, 20, 30),
-        'Ca tối CN': ('Sunday', 18, 0, 20, 30),
+    # Default shifts when hours are not specified
+    DEFAULT_SHIFTS = {
+        'sáng': (8, 0, 12, 0),
+        'chiều': (13, 0, 17, 0),
+        'tối': (18, 0, 21, 0),
+    }
+
+    VI_DAY_TO_EN = {
+        't2': 'Monday', 'thứ 2': 'Monday', 'thu 2': 'Monday', 'thứ hai': 'Monday', 'T2': 'Monday', 'Thứ 2': 'Monday', 'Thu 2': 'Monday', 'Thứ hai': 'Monday',
+        't3': 'Tuesday', 'thứ 3': 'Tuesday', 'thu 3': 'Tuesday', 'thứ ba': 'Tuesday', 'T3': 'Tuesday', 'Thứ 3': 'Tuesday', 'Thu 3': 'Tuesday', 'Thứ ba': 'Tuesday',
+        't4': 'Wednesday', 'thứ 4': 'Wednesday', 'thu 4': 'Wednesday', 'thứ tư': 'Wednesday', 'T4': 'Wednesday', 'Thứ 4': 'Wednesday', 'Thu 4': 'Wednesday', 'Thứ tư': 'Wednesday',
+        't5': 'Thursday', 'thứ 5': 'Thursday', 'thu 5': 'Thursday', 'thứ năm': 'Thursday', 'T5': 'Thursday', 'Thứ 5': 'Thursday', 'Thu 5': 'Thursday', 'Thứ năm': 'Thursday',
+        't6': 'Friday', 'thứ 6': 'Friday', 'thu 6': 'Friday', 'thứ sáu': 'Friday', 'T6': 'Friday', 'Thứ 6': 'Friday', 'Thu 6': 'Friday', 'Thứ sáu': 'Friday',
+        't7': 'Saturday', 'thứ 7': 'Saturday', 'thu 7': 'Saturday', 'thứ bảy': 'Saturday', 'T7': 'Saturday', 'Thứ 7': 'Saturday', 'Thu 7': 'Saturday', 'Thứ bảy': 'Saturday',
+        'cn': 'Sunday', 'chủ nhật': 'Sunday', 'chu nhat': 'Sunday', 'CN': 'Sunday', 'Chủ nhật': 'Sunday', 'Chu nhat': 'Sunday'
     }
     
     @classmethod
@@ -71,18 +88,54 @@ class TimeParser:
         Parse available time string to TimeSlot objects
         
         Examples:
-            'Ca chiều T7 [ 1h30 - 6h00 ]' -> [TimeSlot(Saturday, 13:30-18:00)]
-            'Ca tối T7 [ 6h30 - 8h30], Ca tối CN [ 6h00 - 8h30 ]' -> [TimeSlot(...), TimeSlot(...)]
+            'Ca chiều T7 [ 1h30 - 6h00 ]'
+            'Ca tối T7 [ 6h30 - 8h30], Ca tối CN [ 6h00 - 8h30 ]'
+            'Ca sáng T4, Ca chiều T5 [13h-16h], Ca tối CN [18:00-20:30]'
         """
         if not time_string:
             return []
         
-        slots = []
-        
-        for pattern, (day, sh, sm, eh, em) in cls.SLOT_PATTERNS.items():
-            if pattern in time_string:
-                slots.append(TimeSlot(day, sh, sm, eh, em))
-        
+        text = time_string.lower()
+        slots: List[TimeSlot] = []
+
+        # Build a regex to capture (ca) + day + optional [time-range]
+        # e.g., "ca chiều t7 [ 1h30 - 6h00 ]"
+        day_tokens = r'(t[2-7]|thứ\s*[2-7]|cn|chủ\s*nhật)'
+        shift_tokens = r'(ca\s*(sáng|chiều|tối))?'
+        time_bracket = r'(?:\[\s*([^\]]+)\s*\])?'
+        pattern = re.compile(fr'{shift_tokens}\s*{day_tokens}\s*{time_bracket}', re.IGNORECASE)
+
+        for m in pattern.finditer(text):
+            shift_full, shift, day_vi, time_range = m.groups()
+            # Normalize day
+            day_key = day_vi.replace(' ', '')
+            en_day = cls.VI_DAY_TO_EN.get(day_key, None)
+            if not en_day:
+                # try with space
+                en_day = cls.VI_DAY_TO_EN.get(day_vi.strip(), None)
+            if not en_day:
+                continue
+
+            # Determine hours
+            if time_range:
+                parsed = cls.parse_preferred_time((shift or '') + ' ' + time_range)
+                if parsed:
+                    sh, sm, eh, em = parsed
+                else:
+                    # fallback to default shift if provided
+                    if shift and shift in cls.DEFAULT_SHIFTS:
+                        sh, sm, eh, em = cls.DEFAULT_SHIFTS[shift]
+                    else:
+                        sh, sm, eh, em = 13, 0, 17, 0
+            else:
+                # No range provided, use default by shift
+                if shift and shift in cls.DEFAULT_SHIFTS:
+                    sh, sm, eh, em = cls.DEFAULT_SHIFTS[shift]
+                else:
+                    sh, sm, eh, em = 13, 0, 17, 0
+
+            slots.append(TimeSlot(en_day, sh, sm, eh, em))
+
         return slots
     
     @classmethod
@@ -209,16 +262,9 @@ class TimeParser:
         if not available_slots:
             return None
         
-        # Use first available day
+        # Use first available day and compute next occurrence
         slot = available_slots[0]
         base_date = datetime.now()
-        days_ahead = 5 - base_date.weekday()
-        if days_ahead <= 0:
-            days_ahead += 7
-        base_date = base_date + timedelta(days=days_ahead)
-        
-        if slot.day == 'Sunday':
-            base_date = base_date + timedelta(days=1)
         
         # Validate hour range
         if not (0 <= sh <= 23) or not (0 <= eh <= 23):
@@ -227,8 +273,7 @@ class TimeParser:
             return None
         
         try:
-            start_time = base_date.replace(hour=sh, minute=sm, second=0, microsecond=0)
-            end_time = base_date.replace(hour=eh, minute=em, second=0, microsecond=0)
+            start_time, end_time = TimeSlot(slot.day, sh, sm, eh, em).to_datetime(base_date)
             return (start_time, end_time)
         except ValueError:
             # Invalid time values

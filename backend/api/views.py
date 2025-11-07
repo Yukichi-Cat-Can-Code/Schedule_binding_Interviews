@@ -18,8 +18,9 @@ from api.mongo_models import (
 )
 from scheduler.genetic_algorithm import GeneticAlgorithm
 from scheduler.genetic_algorithm_variant import GeneticAlgorithmVariant
-from scheduler.greedy_algorithm import GreedyScheduler
-from scheduler.simulated_annealing import SimulatedAnnealing
+from scheduler.genetic_algorithm_variant2 import GeneticAlgorithmVariant2
+from scheduler.genetic_algorithm_variant3 import GeneticAlgorithmVariant3
+import random  # Needed for top-k selection and variant cycling
 
 # Utilities
 def to_json_safe(value):
@@ -134,214 +135,123 @@ def _filter_by_session_constraints(schedule_data, current_session):
     return filtered, {'skipped_conflicts': skipped_conflicts, 'skipped_overtime': skipped_overtime}
 
 
-class ApplicantAPIView(APIView):
-    """API endpoint for Applicants"""
-    
-    def get(self, request, pk=None):
-        if pk:
-            applicant = Applicant.find_by_id(pk)
-            if applicant:
-                return Response(applicant)
-            return Response({'error': 'Applicant not found'}, status=status.HTTP_404_NOT_FOUND)
-        
-        applicants = Applicant.find_all()
-        return Response(applicants)
-    
-    def post(self, request):
-        data = request.data
-        if not Applicant.validate(data):
-            return Response({'error': 'Invalid data'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        applicant_id = Applicant.create(data)
-        applicant = Applicant.find_by_id(applicant_id)
-        return Response(applicant, status=status.HTTP_201_CREATED)
-    
-    def put(self, request, pk):
-        result = Applicant.update(pk, request.data)
-        if result:
-            applicant = Applicant.find_by_id(pk)
-            return Response(applicant)
-        return Response({'error': 'Applicant not found'}, status=status.HTTP_404_NOT_FOUND)
-    
-    def delete(self, request, pk):
-        if Applicant.delete(pk):
-            return Response(status=status.HTTP_204_NO_CONTENT)
-        return Response({'error': 'Applicant not found'}, status=status.HTTP_404_NOT_FOUND)
-
-
-class InterviewerAPIView(APIView):
-    """API endpoint for Interviewers"""
-    
-    def get(self, request, pk=None):
-        if pk:
-            interviewer = Interviewer.find_by_id(pk)
-            if interviewer:
-                return Response(interviewer)
-            return Response({'error': 'Interviewer not found'}, status=status.HTTP_404_NOT_FOUND)
-        
-        interviewers = Interviewer.find_all()
-        return Response(interviewers)
-    
-    def post(self, request):
-        data = request.data
-        if not Interviewer.validate(data):
-            return Response({'error': 'Invalid data'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        interviewer_id = Interviewer.create(data)
-        interviewer = Interviewer.find_by_id(interviewer_id)
-        return Response(interviewer, status=status.HTTP_201_CREATED)
-    
-    def put(self, request, pk):
-        result = Interviewer.update(pk, request.data)
-        if result:
-            interviewer = Interviewer.find_by_id(pk)
-            return Response(interviewer)
-        return Response({'error': 'Interviewer not found'}, status=status.HTTP_404_NOT_FOUND)
-    
-    def delete(self, request, pk):
-        if Interviewer.delete(pk):
-            return Response(status=status.HTTP_204_NO_CONTENT)
-        return Response({'error': 'Interviewer not found'}, status=status.HTTP_404_NOT_FOUND)
-
-
-class RoomAPIView(APIView):
-    """API endpoint for Rooms"""
-    
-    def get(self, request, pk=None):
-        if pk:
-            room = Room.find_by_id(pk)
-            if room:
-                return Response(room)
-            return Response({'error': 'Room not found'}, status=status.HTTP_404_NOT_FOUND)
-        
-        rooms = Room.find_all()
-        return Response(rooms)
-    
-    def post(self, request):
-        data = request.data
-        if not Room.validate(data):
-            return Response({'error': 'Invalid data'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        room_id = Room.create(data)
-        room = Room.find_by_id(room_id)
-        return Response(room, status=status.HTTP_201_CREATED)
-    
-    def put(self, request, pk):
-        result = Room.update(pk, request.data)
-        if result:
-            room = Room.find_by_id(pk)
-            return Response(room)
-        return Response({'error': 'Room not found'}, status=status.HTTP_404_NOT_FOUND)
-    
-    def delete(self, request, pk):
-        if Room.delete(pk):
-            return Response(status=status.HTTP_204_NO_CONTENT)
-        return Response({'error': 'Room not found'}, status=status.HTTP_404_NOT_FOUND)
-
-
-class ScheduleAPIView(APIView):
-    """API endpoint for Schedules"""
-    
-    def get(self, request, pk=None):
-        if pk:
-            schedule = Schedule.find_by_id(pk)
-            if schedule:
-                return Response(schedule)
-            return Response({'error': 'Schedule not found'}, status=status.HTTP_404_NOT_FOUND)
-        
-        # Enrich schedules with related details for frontend table view
-        session_id = request.query_params.get('session_id')
-        filter_dict = {'session_id': session_id} if session_id else None
-        schedules = Schedule.find_all(filter_dict)
-        if not schedules:
-            return Response([])
-        
-        # Build lookup maps
-        applicants = {a.get('_id'): a for a in Applicant.find_all()}
-        interviewers = {i.get('_id'): i for i in Interviewer.find_all()}
-        rooms = {r.get('_id'): r for r in Room.find_all()}
-        
-        for s in schedules:
-            aid = s.get('applicant_id')
-            iid = s.get('interviewer_id')
-            rid = s.get('room_id')
-            s['applicant_detail'] = applicants.get(aid)
-            s['interviewer_detail'] = interviewers.get(iid)
-            s['room_detail'] = rooms.get(rid)
-            # default status if missing
-            if 'status' not in s:
-                s['status'] = 'scheduled'
-        
-        return Response(schedules)
-    
-    def post(self, request):
-        data = request.data
-        if not Schedule.validate(data):
-            return Response({'error': 'Invalid data'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        schedule_id = Schedule.create(data)
-        schedule = Schedule.find_by_id(schedule_id)
-        return Response(schedule, status=status.HTTP_201_CREATED)
-    
-    def put(self, request, pk):
-        result = Schedule.update(pk, request.data)
-        if result:
-            schedule = Schedule.find_by_id(pk)
-            return Response(schedule)
-        return Response({'error': 'Schedule not found'}, status=status.HTTP_404_NOT_FOUND)
-    
-    def delete(self, request, pk):
-        if Schedule.delete(pk):
-            return Response(status=status.HTTP_204_NO_CONTENT)
-        return Response({'error': 'Schedule not found'}, status=status.HTTP_404_NOT_FOUND)
-
-
-@api_view(['GET'])
-def get_schedule_timeline(request):
-    """Get schedules formatted for timeline view"""
+def run_genetic_algorithm_variant2(request):
+    """Run GA3 (Variant2)"""
     try:
-        session_id = request.query_params.get('session_id')
-        filter_dict = {'session_id': session_id} if session_id else None
-        schedules = Schedule.find_all(filter_dict)
-        if not schedules:
-            return Response({})
-        
-        # Preload lookups
-        applicants = {a.get('_id'): a for a in Applicant.find_all()}
-        interviewers = {i.get('_id'): i for i in Interviewer.find_all()}
-        rooms = {r.get('_id'): r for r in Room.find_all()}
-        
-        # Group by room (use room code/name if available)
-        timeline_grouped = {}
-        for s in schedules:
-            rid = s.get('room_id')
-            room = rooms.get(rid) or {}
-            room_key = room.get('room_code') or room.get('room_name') or rid
-            if room_key not in timeline_grouped:
-                timeline_grouped[room_key] = []
-            
-            aid = s.get('applicant_id')
-            iid = s.get('interviewer_id')
-            applicant = applicants.get(aid) or {}
-            interviewer = interviewers.get(iid) or {}
-            
-            timeline_grouped[room_key].append({
-                'id': s.get('_id'),
-                'applicant': applicant.get('full_name', 'Applicant'),
-                'interviewer': interviewer.get('full_name', 'Interviewer'),
-                'position': applicant.get('position') or s.get('position'),
-                'start': s.get('start_time'),
-                'end': s.get('end_time'),
-                'status': s.get('status', 'scheduled'),
-            })
-        
-        return Response(timeline_grouped)
+        config = request.data.get('config', {})
+        dry_run = request.data.get('dry_run', False)
+        applicants = normalize_data(Applicant.find_all())
+        interviewers = normalize_data(Interviewer.find_all())
+        rooms = normalize_data(Room.find_all())
+        if not applicants or not interviewers or not rooms:
+            return Response({'error': 'Insufficient data.'}, status=status.HTTP_400_BAD_REQUEST)
+        start = time.time()
+        ga3 = GeneticAlgorithmVariant2(config=config)
+        result = ga3.evolve(applicants, interviewers, rooms)
+        chrom = result.get('best_solution')
+        schedule_data = []
+        if chrom and hasattr(chrom, 'genes'):
+            for gene in chrom.genes:
+                schedule_data.append({
+                    'applicant_id': gene.applicant_id,
+                    'interviewer_id': gene.interviewer_id,
+                    'room_id': gene.room_id,
+                    'start_time': gene.start_time.isoformat(),
+                    'end_time': gene.end_time.isoformat(),
+                    'position': gene.position,
+                    'interview_date': gene.start_time.date().isoformat()
+                })
+        # session constraints only if we persist
+        schedule_ids = []
+        active_session = _get_active_session_or_none()
+        if schedule_data and active_session and not dry_run:
+            for e in schedule_data:
+                e['session_id'] = active_session.get('_id')
+            schedule_data, _stats = _filter_by_session_constraints(schedule_data, active_session)
+            Schedule.delete_all({'session_id': active_session.get('_id')})
+            for entry in schedule_data:
+                sid = Schedule.create(entry)
+                schedule_ids.append(str(sid))
+        result_doc = {
+            'algorithm': 'GA3',
+            'fitness_score': result.get('final_fitness', 0),
+            'conflict_score': chrom.conflict_score if chrom else 0,
+            'idle_time_score': chrom.idle_time_score if chrom else 0,
+            'fairness_score': chrom.fairness_score if chrom else 0,
+            'matching_score': chrom.matching_score if chrom else 0,
+            'room_usage_score': chrom.room_usage_score if chrom else 0,
+            'execution_time': time.time() - start,
+            'generations': result.get('generations'),
+            'fitness_history': result.get('fitness_history', []),
+            'schedule_data': schedule_data,
+            'schedule_ids': schedule_ids,
+            'config_used': config,
+            'dry_run': dry_run,
+            'created_at': datetime.now()
+        }
+        rid = ScheduleResult.create(result_doc)
+        return Response(to_json_safe({'id': rid, **result_doc}))
     except Exception as e:
-        print(f"Error in get_schedule_timeline: {str(e)}")
-        return Response(
-            {'error': str(e)},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+def run_genetic_algorithm_variant3(request):
+    """Run GA4 (Variant3) with local search"""
+    try:
+        config = request.data.get('config', {})
+        dry_run = request.data.get('dry_run', False)
+        applicants = normalize_data(Applicant.find_all())
+        interviewers = normalize_data(Interviewer.find_all())
+        rooms = normalize_data(Room.find_all())
+        if not applicants or not interviewers or not rooms:
+            return Response({'error': 'Insufficient data.'}, status=status.HTTP_400_BAD_REQUEST)
+        start = time.time()
+        ga4 = GeneticAlgorithmVariant3(config=config)
+        result = ga4.evolve(applicants, interviewers, rooms)
+        chrom = result.get('best_solution')
+        schedule_data = []
+        if chrom and hasattr(chrom, 'genes'):
+            for gene in chrom.genes:
+                schedule_data.append({
+                    'applicant_id': gene.applicant_id,
+                    'interviewer_id': gene.interviewer_id,
+                    'room_id': gene.room_id,
+                    'start_time': gene.start_time.isoformat(),
+                    'end_time': gene.end_time.isoformat(),
+                    'position': gene.position,
+                    'interview_date': gene.start_time.date().isoformat()
+                })
+        schedule_ids = []
+        active_session = _get_active_session_or_none()
+        if schedule_data and active_session and not dry_run:
+            for e in schedule_data:
+                e['session_id'] = active_session.get('_id')
+            schedule_data, _stats = _filter_by_session_constraints(schedule_data, active_session)
+            Schedule.delete_all({'session_id': active_session.get('_id')})
+            for entry in schedule_data:
+                sid = Schedule.create(entry)
+                schedule_ids.append(str(sid))
+        result_doc = {
+            'algorithm': 'GA4',
+            'fitness_score': result.get('final_fitness', 0),
+            'conflict_score': chrom.conflict_score if chrom else 0,
+            'idle_time_score': chrom.idle_time_score if chrom else 0,
+            'fairness_score': chrom.fairness_score if chrom else 0,
+            'matching_score': chrom.matching_score if chrom else 0,
+            'room_usage_score': chrom.room_usage_score if chrom else 0,
+            'execution_time': time.time() - start,
+            'generations': result.get('generations'),
+            'fitness_history': result.get('fitness_history', []),
+            'schedule_data': schedule_data,
+            'schedule_ids': schedule_ids,
+            'config_used': config,
+            'dry_run': dry_run,
+            'created_at': datetime.now()
+        }
+        rid = ScheduleResult.create(result_doc)
+        return Response(to_json_safe({'id': rid, **result_doc}))
+    except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['POST'])
@@ -546,7 +456,8 @@ def run_genetic_algorithm(request):
                         'room_id': gene.room_id,
                         'start_time': gene.start_time.isoformat() if hasattr(gene.start_time, 'isoformat') else str(gene.start_time),
                         'end_time': gene.end_time.isoformat() if hasattr(gene.end_time, 'isoformat') else str(gene.end_time),
-                        'position': gene.position
+                        'position': gene.position,
+                        'interview_date': gene.start_time.date().isoformat() if hasattr(gene.start_time, 'date') else None
                     }
                     schedule_data.append(entry)
                     if i == 0:
@@ -639,7 +550,8 @@ def run_genetic_algorithm_variant(request):
                     'room_id': gene.room_id,
                     'start_time': gene.start_time.isoformat() if hasattr(gene.start_time, 'isoformat') else str(gene.start_time),
                     'end_time': gene.end_time.isoformat() if hasattr(gene.end_time, 'isoformat') else str(gene.end_time),
-                    'position': gene.position
+                    'position': gene.position,
+                    'interview_date': gene.start_time.date().isoformat() if hasattr(gene.start_time, 'date') else None
                 })
 
         # Apply session-aware constraints and save
@@ -687,182 +599,6 @@ def run_genetic_algorithm_variant(request):
         return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-@api_view(['POST'])
-def run_greedy_algorithm(request):
-    """Run Greedy Algorithm for scheduling"""
-    try:
-        # Get data from MongoDB
-        applicants = normalize_data(Applicant.find_all())
-        interviewers = normalize_data(Interviewer.find_all())
-        rooms = normalize_data(Room.find_all())
-        
-        if not applicants or not interviewers or not rooms:
-            return Response({
-                'error': 'Insufficient data. Need applicants, interviewers, and rooms.'
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Run Greedy
-        config = request.data.get('config', {})
-        greedy = GreedyScheduler(config=config)
-        result = greedy.schedule(applicants, interviewers, rooms)
-        
-        # Extract results
-        best_chromosome = result.get('best_solution')
-        fitness_score = result.get('fitness', 0)
-        execution_time = result.get('execution_time', 0)
-        
-        # Convert Chromosome genes to schedule data
-        schedule_data = []
-        if best_chromosome and hasattr(best_chromosome, 'genes'):
-            for gene in best_chromosome.genes:
-                schedule_data.append({
-                    'applicant_id': gene.applicant_id,
-                    'interviewer_id': gene.interviewer_id,
-                    'room_id': gene.room_id,
-                    'start_time': gene.start_time.isoformat() if hasattr(gene.start_time, 'isoformat') else str(gene.start_time),
-                    'end_time': gene.end_time.isoformat() if hasattr(gene.end_time, 'isoformat') else str(gene.end_time),
-                    'position': gene.position
-                })
-        
-        # Apply session-aware constraints and save schedules
-        schedule_ids = []
-        if schedule_data:
-            active_session = _get_active_session_or_none()
-            if active_session:
-                for e in schedule_data:
-                    e['session_id'] = active_session.get('_id')
-            filtered_data, stats = _filter_by_session_constraints(schedule_data, active_session)
-            print(f"🧹 [GREEDY] Filtered schedules: kept={len(filtered_data)}, skipped_conflicts={stats['skipped_conflicts']}, skipped_overtime={stats['skipped_overtime']}")
-            schedule_data = filtered_data
-
-        if schedule_data:
-            print(f"💾 [GREEDY] Saving {len(schedule_data)} schedules to database...")
-            if 'active_session' in locals() and active_session:
-                Schedule.delete_all({'session_id': active_session.get('_id')})
-            else:
-                Schedule.delete_all()
-            for schedule_entry in schedule_data:
-                schedule_id = Schedule.create(schedule_entry)
-                schedule_ids.append(str(schedule_id))
-            print(f"✅ [GREEDY] Saved {len(schedule_ids)} schedules")
-        
-        # Save result
-        result_data = {
-            'algorithm': 'GREEDY',
-            'fitness_score': fitness_score,
-            'conflict_score': best_chromosome.conflict_score if best_chromosome else 0,
-            'idle_time_score': best_chromosome.idle_time_score if best_chromosome else 0,
-            'fairness_score': best_chromosome.fairness_score if best_chromosome else 0,
-            'matching_score': best_chromosome.matching_score if best_chromosome else 0,
-            'room_usage_score': best_chromosome.room_usage_score if best_chromosome else 0,
-            'execution_time': execution_time,
-            'generations': None,
-            'schedule_data': schedule_data,
-            'schedule_ids': schedule_ids,
-            'config_used': config,
-            'created_at': datetime.now()
-        }
-        
-        result_id = ScheduleResult.create(result_data)
-        safe_result = {
-            'id': result_id,
-            **result_data
-        }
-        
-        return Response(to_json_safe(safe_result))
-    
-    except Exception as e:
-        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-@api_view(['POST'])
-def run_simulated_annealing(request):
-    """Run Simulated Annealing for scheduling"""
-    try:
-        config = request.data.get('config', {})
-        
-        # Get data from MongoDB
-        applicants = normalize_data(Applicant.find_all())
-        interviewers = normalize_data(Interviewer.find_all())
-        rooms = normalize_data(Room.find_all())
-        
-        if not applicants or not interviewers or not rooms:
-            return Response({
-                'error': 'Insufficient data. Need applicants, interviewers, and rooms.'
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Run SA
-        sa = SimulatedAnnealing(config=config)
-        result = sa.optimize(applicants, interviewers, rooms)
-        
-        # Extract results
-        best_chromosome = result.get('best_solution')
-        fitness_score = result.get('fitness', 0)
-        execution_time = result.get('execution_time', 0)
-        iterations = result.get('iterations', 0)
-        
-        # Convert Chromosome genes to schedule data
-        schedule_data = []
-        if best_chromosome and hasattr(best_chromosome, 'genes'):
-            for gene in best_chromosome.genes:
-                schedule_data.append({
-                    'applicant_id': gene.applicant_id,
-                    'interviewer_id': gene.interviewer_id,
-                    'room_id': gene.room_id,
-                    'start_time': gene.start_time.isoformat() if hasattr(gene.start_time, 'isoformat') else str(gene.start_time),
-                    'end_time': gene.end_time.isoformat() if hasattr(gene.end_time, 'isoformat') else str(gene.end_time),
-                    'position': gene.position
-                })
-        
-        # Apply session-aware constraints and save schedules
-        schedule_ids = []
-        if schedule_data:
-            active_session = _get_active_session_or_none()
-            if active_session:
-                for e in schedule_data:
-                    e['session_id'] = active_session.get('_id')
-            filtered_data, stats = _filter_by_session_constraints(schedule_data, active_session)
-            print(f"🧹 [SA] Filtered schedules: kept={len(filtered_data)}, skipped_conflicts={stats['skipped_conflicts']}, skipped_overtime={stats['skipped_overtime']}")
-            schedule_data = filtered_data
-
-        if schedule_data:
-            print(f"💾 [SA] Saving {len(schedule_data)} schedules to database...")
-            if 'active_session' in locals() and active_session:
-                Schedule.delete_all({'session_id': active_session.get('_id')})
-            else:
-                Schedule.delete_all()
-            for schedule_entry in schedule_data:
-                schedule_id = Schedule.create(schedule_entry)
-                schedule_ids.append(str(schedule_id))
-            print(f"✅ [SA] Saved {len(schedule_ids)} schedules")
-        
-        # Save result
-        result_data = {
-            'algorithm': 'SA',
-            'fitness_score': fitness_score,
-            'conflict_score': best_chromosome.conflict_score if best_chromosome else 0,
-            'idle_time_score': best_chromosome.idle_time_score if best_chromosome else 0,
-            'fairness_score': best_chromosome.fairness_score if best_chromosome else 0,
-            'matching_score': best_chromosome.matching_score if best_chromosome else 0,
-            'room_usage_score': best_chromosome.room_usage_score if best_chromosome else 0,
-            'execution_time': execution_time,
-            'generations': iterations,  # Using iterations for SA
-            'schedule_data': schedule_data,
-            'schedule_ids': schedule_ids,
-            'config_used': config,
-            'created_at': datetime.now()
-        }
-        
-        result_id = ScheduleResult.create(result_data)
-        safe_result = {
-            'id': result_id,
-            **result_data
-        }
-        
-        return Response(to_json_safe(safe_result))
-    
-    except Exception as e:
-        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['GET'])
@@ -882,7 +618,7 @@ def algorithm_results(request):
 
 @api_view(['POST'])
 def compare_algorithms(request):
-    """Run all three algorithms and compare results"""
+    """Compare GA family variants (GA, GA2, GA3, GA4)"""
     try:
         config = request.data.get('config', {})
         
@@ -957,51 +693,55 @@ def compare_algorithms(request):
             'room_usage_score': ga2_chromosome.room_usage_score if ga2_chromosome else 0,
         })
         
-        # 2. Run Greedy Algorithm
-        print("🔄 Running Greedy Algorithm...")
-        greedy_start = time.time()
-        greedy_config = config.get('GREEDY', {})
-        greedy = GreedyScheduler(config=greedy_config)
-        greedy_result = greedy.schedule(applicants, interviewers, rooms)
-        greedy_time = time.time() - greedy_start
-        
-        greedy_chromosome = greedy_result.get('best_solution')
-        comparison_results.append({
-            'algorithm': 'GREEDY',
-            'fitness_score': greedy_result.get('final_fitness', 0),
-            'execution_time': greedy_time,
-            'schedules_count': len(greedy_chromosome.genes) if greedy_chromosome else 0,
-            'conflict_score': greedy_chromosome.conflict_score if greedy_chromosome else 0,
-            'idle_time_score': greedy_chromosome.idle_time_score if greedy_chromosome else 0,
-            'fairness_score': greedy_chromosome.fairness_score if greedy_chromosome else 0,
-            'matching_score': greedy_chromosome.matching_score if greedy_chromosome else 0,
-            'room_usage_score': greedy_chromosome.room_usage_score if greedy_chromosome else 0,
+        # 2. Run GA3
+        print("🔄 Running Genetic Algorithm Variant 2 (GA3)...")
+        ga3_start = time.time()
+        ga3_config = config.get('GA3', {
+            'POPULATION_SIZE': 120,
+            'GENERATIONS': 250,
+            'CROSSOVER_RATE': 0.85,
+            'MUTATION_RATE': 0.12
         })
-        
-        # 3. Run Simulated Annealing
-        print("🔄 Running Simulated Annealing...")
-        sa_start = time.time()
-        sa_config = config.get('SA', {
-            'INITIAL_TEMP': 1000,
-            'COOLING_RATE': 0.95,
-            'MIN_TEMP': 1,
-            'MAX_ITERATIONS': 1000
-        })
-        sa = SimulatedAnnealing(config=sa_config)
-        sa_result = sa.optimize(applicants, interviewers, rooms)
-        sa_time = time.time() - sa_start
-        
-        sa_chromosome = sa_result.get('best_solution')
+        ga3 = GeneticAlgorithmVariant2(config=ga3_config)
+        ga3_result = ga3.evolve(applicants, interviewers, rooms)
+        ga3_time = time.time() - ga3_start
+        ga3_chromosome = ga3_result.get('best_solution')
         comparison_results.append({
-            'algorithm': 'SA',
-            'fitness_score': sa_result.get('final_fitness', 0),
-            'execution_time': sa_time,
-            'schedules_count': len(sa_chromosome.genes) if sa_chromosome else 0,
-            'conflict_score': sa_chromosome.conflict_score if sa_chromosome else 0,
-            'idle_time_score': sa_chromosome.idle_time_score if sa_chromosome else 0,
-            'fairness_score': sa_chromosome.fairness_score if sa_chromosome else 0,
-            'matching_score': sa_chromosome.matching_score if sa_chromosome else 0,
-            'room_usage_score': sa_chromosome.room_usage_score if sa_chromosome else 0,
+            'algorithm': 'GA3',
+            'fitness_score': ga3_result.get('final_fitness', 0),
+            'execution_time': ga3_time,
+            'schedules_count': len(ga3_chromosome.genes) if ga3_chromosome else 0,
+            'conflict_score': ga3_chromosome.conflict_score if ga3_chromosome else 0,
+            'idle_time_score': ga3_chromosome.idle_time_score if ga3_chromosome else 0,
+            'fairness_score': ga3_chromosome.fairness_score if ga3_chromosome else 0,
+            'matching_score': ga3_chromosome.matching_score if ga3_chromosome else 0,
+            'room_usage_score': ga3_chromosome.room_usage_score if ga3_chromosome else 0,
+        })
+
+        # 3. Run GA4
+        print("🔄 Running Genetic Algorithm Variant 3 (GA4)...")
+        ga4_start = time.time()
+        ga4_config = config.get('GA4', {
+            'POPULATION_SIZE': 120,
+            'GENERATIONS': 250,
+            'CROSSOVER_RATE': 0.9,
+            'MUTATION_RATE': 0.18,
+            'LOCAL_SEARCH_RATE': 0.3
+        })
+        ga4 = GeneticAlgorithmVariant3(config=ga4_config)
+        ga4_result = ga4.evolve(applicants, interviewers, rooms)
+        ga4_time = time.time() - ga4_start
+        ga4_chromosome = ga4_result.get('best_solution')
+        comparison_results.append({
+            'algorithm': 'GA4',
+            'fitness_score': ga4_result.get('final_fitness', 0),
+            'execution_time': ga4_time,
+            'schedules_count': len(ga4_chromosome.genes) if ga4_chromosome else 0,
+            'conflict_score': ga4_chromosome.conflict_score if ga4_chromosome else 0,
+            'idle_time_score': ga4_chromosome.idle_time_score if ga4_chromosome else 0,
+            'fairness_score': ga4_chromosome.fairness_score if ga4_chromosome else 0,
+            'matching_score': ga4_chromosome.matching_score if ga4_chromosome else 0,
+            'room_usage_score': ga4_chromosome.room_usage_score if ga4_chromosome else 0,
         })
         
         print(f"✅ Comparison complete!")
@@ -1014,6 +754,100 @@ def compare_algorithms(request):
         print(f"❌ Error in compare_algorithms: {e}")
         import traceback
         traceback.print_exc()
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+def generate_top_schedules(request):
+    """Generate multiple GA family runs and return top-K without persisting schedules."""
+    try:
+        k = int(request.data.get('k', 5))
+        runs = int(request.data.get('runs', 8))
+        config = request.data.get('config', {})
+        applicants = normalize_data(Applicant.find_all())
+        interviewers = normalize_data(Interviewer.find_all())
+        rooms = normalize_data(Room.find_all())
+        if not applicants or not interviewers or not rooms:
+            return Response({'error': 'Insufficient data.'}, status=status.HTTP_400_BAD_REQUEST)
+        variants = [
+            ('GA', GeneticAlgorithm, config.get('GA', {})),
+            ('GA2', GeneticAlgorithmVariant, config.get('GA2', {})),
+            ('GA3', GeneticAlgorithmVariant2, config.get('GA3', {})),
+            ('GA4', GeneticAlgorithmVariant3, config.get('GA4', {})),
+        ]
+        candidate_results = []
+        for i in range(runs):
+            name, cls, cfg = random.choice(variants)
+            alg = cls(cfg)
+            res = alg.evolve(applicants, interviewers, rooms)
+            chrom = res.get('best_solution')
+            schedule_data = []
+            if chrom and hasattr(chrom, 'genes'):
+                for gene in chrom.genes:
+                    schedule_data.append({
+                        'applicant_id': gene.applicant_id,
+                        'interviewer_id': gene.interviewer_id,
+                        'room_id': gene.room_id,
+                        'start_time': gene.start_time.isoformat(),
+                        'end_time': gene.end_time.isoformat(),
+                        'position': gene.position,
+                        'interview_date': gene.start_time.date().isoformat()
+                    })
+            doc = {
+                'algorithm': name,
+                'fitness_score': res.get('final_fitness', 0),
+                'conflict_score': chrom.conflict_score if chrom else 0,
+                'idle_time_score': chrom.idle_time_score if chrom else 0,
+                'fairness_score': chrom.fairness_score if chrom else 0,
+                'matching_score': chrom.matching_score if chrom else 0,
+                'room_usage_score': chrom.room_usage_score if chrom else 0,
+                'generations': res.get('generations'),
+                'schedule_data': schedule_data,
+                'fitness_history': res.get('fitness_history', []),
+                'created_at': datetime.now(),
+                'candidate_set': True,
+                'is_selected': False
+            }
+            rid = ScheduleResult.create(doc)
+            candidate_results.append({'id': rid, **doc})
+        # pick top k by fitness
+        candidate_results.sort(key=lambda x: x['fitness_score'], reverse=True)
+        top_k = candidate_results[:k]
+        return Response(to_json_safe({'top_k': top_k, 'total_generated': len(candidate_results)}))
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+def choose_schedule_result(request):
+    """Select one candidate schedule result and persist its schedule_data as official schedules."""
+    try:
+        result_id = request.data.get('result_id')
+        if not result_id:
+            return Response({'error': 'result_id required'}, status=status.HTTP_400_BAD_REQUEST)
+        result = ScheduleResult.find_by_id(result_id)
+        if not result:
+            return Response({'error': 'Result not found'}, status=status.HTTP_404_NOT_FOUND)
+        schedule_data = result.get('schedule_data', [])
+        active_session = _get_active_session_or_none()
+        if not active_session:
+            return Response({'error': 'No active session'}, status=status.HTTP_400_BAD_REQUEST)
+        # Clear existing schedules for session
+        Schedule.delete_all({'session_id': active_session.get('_id')})
+        saved_ids = []
+        for entry in schedule_data:
+            entry['session_id'] = active_session.get('_id')
+            # ensure interview_date present
+            if 'interview_date' not in entry and 'start_time' in entry:
+                try:
+                    entry['interview_date'] = datetime.fromisoformat(entry['start_time']).date().isoformat()
+                except Exception:
+                    entry['interview_date'] = active_session.get('start_date')
+            sid = Schedule.create(entry)
+            saved_ids.append(str(sid))
+        ScheduleResult.update(result_id, {'is_selected': True})
+        return Response({'selected_result_id': result_id, 'persisted_count': len(saved_ids)})
+    except Exception as e:
         return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
@@ -1228,5 +1062,183 @@ def set_active_session(request, pk):
             return Response(session)
         return Response({'error': 'Session not found'}, status=status.HTTP_404_NOT_FOUND)
     except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class ApplicantAPIView(APIView):
+    """API endpoint for Applicants"""
+
+    def get(self, request, pk=None):
+        if pk:
+            item = Applicant.find_by_id(pk)
+            if item:
+                return Response(item)
+            return Response({'error': 'Applicant not found'}, status=status.HTTP_404_NOT_FOUND)
+        # Optional filters
+        position = request.query_params.get('position')
+        filter_dict = {'position': position} if position else {}
+        items = Applicant.find_all(filter_dict)
+        return Response(items)
+
+    def post(self, request):
+        data = request.data
+        is_valid, err = Applicant.validate(data)
+        if not is_valid:
+            return Response({'error': err}, status=status.HTTP_400_BAD_REQUEST)
+        item_id = Applicant.create(data)
+        item = Applicant.find_by_id(item_id)
+        return Response(item, status=status.HTTP_201_CREATED)
+
+    def put(self, request, pk):
+        if Applicant.update(pk, request.data):
+            return Response(Applicant.find_by_id(pk))
+        return Response({'error': 'Applicant not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    def delete(self, request, pk):
+        if Applicant.delete(pk):
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        return Response({'error': 'Applicant not found'}, status=status.HTTP_404_NOT_FOUND)
+
+
+class InterviewerAPIView(APIView):
+    """API endpoint for Interviewers"""
+
+    def get(self, request, pk=None):
+        if pk:
+            item = Interviewer.find_by_id(pk)
+            if item:
+                return Response(item)
+            return Response({'error': 'Interviewer not found'}, status=status.HTTP_404_NOT_FOUND)
+        position = request.query_params.get('position')
+        filter_dict = {'position': position} if position else {}
+        items = Interviewer.find_all(filter_dict)
+        return Response(items)
+
+    def post(self, request):
+        data = request.data
+        is_valid, err = Interviewer.validate(data)
+        if not is_valid:
+            return Response({'error': err}, status=status.HTTP_400_BAD_REQUEST)
+        item_id = Interviewer.create(data)
+        item = Interviewer.find_by_id(item_id)
+        return Response(item, status=status.HTTP_201_CREATED)
+
+    def put(self, request, pk):
+        if Interviewer.update(pk, request.data):
+            return Response(Interviewer.find_by_id(pk))
+        return Response({'error': 'Interviewer not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    def delete(self, request, pk):
+        if Interviewer.delete(pk):
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        return Response({'error': 'Interviewer not found'}, status=status.HTTP_404_NOT_FOUND)
+
+
+class RoomAPIView(APIView):
+    """API endpoint for Rooms"""
+
+    def get(self, request, pk=None):
+        if pk:
+            item = Room.find_by_id(pk)
+            if item:
+                return Response(item)
+            return Response({'error': 'Room not found'}, status=status.HTTP_404_NOT_FOUND)
+        items = Room.find_all()
+        return Response(items)
+
+    def post(self, request):
+        data = request.data
+        is_valid, err = Room.validate(data)
+        if not is_valid:
+            return Response({'error': err}, status=status.HTTP_400_BAD_REQUEST)
+        item_id = Room.create(data)
+        item = Room.find_by_id(item_id)
+        return Response(item, status=status.HTTP_201_CREATED)
+
+    def put(self, request, pk):
+        if Room.update(pk, request.data):
+            return Response(Room.find_by_id(pk))
+        return Response({'error': 'Room not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    def delete(self, request, pk):
+        if Room.delete(pk):
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        return Response({'error': 'Room not found'}, status=status.HTTP_404_NOT_FOUND)
+
+
+class ScheduleAPIView(APIView):
+    """API endpoint for Schedules"""
+
+    def get(self, request, pk=None):
+        if pk:
+            item = Schedule.find_by_id(pk)
+            if item:
+                return Response(item)
+            return Response({'error': 'Schedule not found'}, status=status.HTTP_404_NOT_FOUND)
+        session_id = request.query_params.get('session_id')
+        filter_dict = {'session_id': session_id} if session_id else {}
+        items = Schedule.find_all(filter_dict)
+        return Response(items)
+
+    def post(self, request):
+        data = request.data
+        is_valid, err = Schedule.validate(data)
+        if not is_valid:
+            return Response({'error': err}, status=status.HTTP_400_BAD_REQUEST)
+        item_id = Schedule.create(data)
+        item = Schedule.find_by_id(item_id)
+        return Response(item, status=status.HTTP_201_CREATED)
+
+    def put(self, request, pk):
+        if Schedule.update(pk, request.data):
+            return Response(Schedule.find_by_id(pk))
+        return Response({'error': 'Schedule not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    def delete(self, request, pk):
+        if Schedule.delete(pk):
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        return Response({'error': 'Schedule not found'}, status=status.HTTP_404_NOT_FOUND)
+
+
+@api_view(['GET'])
+def get_schedule_timeline(request):
+    """Return schedules grouped by room for timeline view."""
+    try:
+        session_id = request.query_params.get('session_id')
+        filter_dict = {'session_id': session_id} if session_id else None
+        schedules = Schedule.find_all(filter_dict)
+
+        # Build lookup maps
+        applicants = {a.get('_id'): a for a in Applicant.find_all()}
+        interviewers = {i.get('_id'): i for i in Interviewer.find_all()}
+        rooms = {r.get('_id'): r for r in Room.find_all()}
+
+        timeline_grouped = {}
+        for s in schedules:
+            rid = s.get('room_id')
+            room = rooms.get(rid) or {}
+            room_key = room.get('room_code') or room.get('room_name') or rid
+            if room_key not in timeline_grouped:
+                timeline_grouped[room_key] = []
+
+            aid = s.get('applicant_id')
+            iid = s.get('interviewer_id')
+            applicant = applicants.get(aid) or {}
+            interviewer = interviewers.get(iid) or {}
+
+            timeline_grouped[room_key].append({
+                'id': s.get('_id'),
+                'applicant': applicant.get('full_name', 'Applicant'),
+                'interviewer': interviewer.get('full_name', 'Interviewer'),
+                'position': s.get('position') or applicant.get('position'),
+                'start': s.get('start_time'),
+                'end': s.get('end_time'),
+                'interview_date': s.get('interview_date'),
+                'status': s.get('status', 'scheduled'),
+            })
+
+        return Response(timeline_grouped)
+    except Exception as e:
+        print(f"Error in get_schedule_timeline: {str(e)}")
         return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 

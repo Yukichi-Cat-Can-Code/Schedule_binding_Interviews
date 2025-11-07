@@ -7,6 +7,7 @@ import { FiAlertCircle } from "react-icons/fi";
 const ScheduleView = () => {
   const [viewMode, setViewMode] = useState("timeline"); // timeline | table
   const [selectedSessionId, setSelectedSessionId] = useState("");
+  const [selectedDate, setSelectedDate] = useState(""); // ISO date filter
 
   // Sessions
   const { data: sessions } = useQuery({
@@ -87,6 +88,32 @@ const ScheduleView = () => {
               </option>
             ))}
           </select>
+          {/* Date Filter (client-side) */}
+          <select
+            className="px-3 py-2 border rounded-md text-sm"
+            value={selectedDate}
+            onChange={(e) => setSelectedDate(e.target.value)}
+          >
+            <option value="">All dates</option>
+            {Array.from(
+              new Set(
+                (schedules || []).map(
+                  (s) => s.interview_date || s.start_time?.slice(0, 10)
+                )
+              )
+            )
+              .filter(Boolean)
+              .sort()
+              .map((d) => (
+                <option key={d} value={d}>
+                  {new Date(d).toLocaleDateString("vi-VN", {
+                    weekday: "short",
+                    day: "2-digit",
+                    month: "2-digit",
+                  })}
+                </option>
+              ))}
+          </select>
           {/* View Switch */}
           <button
             onClick={() => setViewMode("timeline")}
@@ -139,16 +166,24 @@ const ScheduleView = () => {
       {/* Content */}
       <div className="bg-white rounded-lg shadow p-6">
         {viewMode === "timeline" ? (
-          <TimelineView timeline={timeline} positionMap={positionMap} />
+          <TimelineView
+            timeline={timeline}
+            positionMap={positionMap}
+            selectedDate={selectedDate}
+          />
         ) : (
-          <TableView schedules={schedules} positionMap={positionMap} />
+          <TableView
+            schedules={schedules}
+            positionMap={positionMap}
+            selectedDate={selectedDate}
+          />
         )}
       </div>
     </div>
   );
 };
 
-const TimelineView = ({ timeline, positionMap }) => {
+const TimelineView = ({ timeline, positionMap, selectedDate }) => {
   if (!timeline || Object.keys(timeline).length === 0) {
     return (
       <div className="text-center py-12 text-gray-500">
@@ -172,54 +207,80 @@ const TimelineView = ({ timeline, positionMap }) => {
     <div className="space-y-6">
       <h3 className="text-lg font-semibold">Timeline by Room</h3>
       {sortedRooms.map(([roomId, slots]) => {
-        const sortedSlots = [...slots].sort(
+        const filtered = selectedDate
+          ? slots.filter(
+              (s) =>
+                (s.interview_date || s.start?.slice(0, 10)) === selectedDate
+            )
+          : slots;
+        const sortedSlots = [...filtered].sort(
           (s1, s2) => new Date(s1.start) - new Date(s2.start)
         );
         return (
           <div key={roomId} className="border rounded-lg p-4">
             <h4 className="font-medium text-gray-900 mb-3">{roomId}</h4>
             <div className="space-y-2">
-              {sortedSlots.map((slot) => (
-                <div
-                  key={slot.id}
-                  className="timeline-slot p-3 rounded-lg border-l-4 bg-gray-50 hover:bg-gray-100 cursor-pointer"
-                  style={{
-                    borderLeftColor: positionColors[slot.position] || "#9ca3af",
-                  }}
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <p className="font-medium text-gray-900">
-                        {slot.applicant}
-                      </p>
-                      <p className="text-sm text-gray-600">
-                        Interviewer: {slot.interviewer}
-                      </p>
-                      <p className="text-sm text-gray-600">
-                        Position:{" "}
-                        <span className="font-medium">
-                          {positionMap?.[slot.position] || slot.position}
-                        </span>
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm font-medium text-gray-900">
-                        {format(parseISO(slot.start), "HH:mm")} -{" "}
-                        {format(parseISO(slot.end), "HH:mm")}
-                      </p>
-                      <span
-                        className={`inline-block px-2 py-1 text-xs rounded-full mt-1 ${
-                          slot.status === "scheduled"
-                            ? "bg-green-100 text-green-800"
-                            : slot.status === "completed"
-                            ? "bg-blue-100 text-blue-800"
-                            : "bg-gray-100 text-gray-800"
-                        }`}
-                      >
-                        {slot.status}
-                      </span>
-                    </div>
+              {/* Group by date inside each room */}
+              {Object.entries(
+                sortedSlots.reduce((acc, slot) => {
+                  const d = slot.interview_date || slot.start.slice(0, 10);
+                  acc[d] = acc[d] || [];
+                  acc[d].push(slot);
+                  return acc;
+                }, {})
+              ).map(([dateKey, daySlots]) => (
+                <div key={dateKey} className="space-y-2">
+                  <div className="text-sm text-gray-700 font-semibold mt-2">
+                    {new Date(dateKey).toLocaleDateString("vi-VN", {
+                      weekday: "long",
+                      day: "2-digit",
+                      month: "2-digit",
+                    })}
                   </div>
+                  {daySlots.map((slot) => (
+                    <div
+                      key={slot.id}
+                      className="timeline-slot p-3 rounded-lg border-l-4 bg-gray-50 hover:bg-gray-100 cursor-pointer"
+                      style={{
+                        borderLeftColor:
+                          positionColors[slot.position] || "#9ca3af",
+                      }}
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <p className="font-medium text-gray-900">
+                            {slot.applicant}
+                          </p>
+                          <p className="text-sm text-gray-600">
+                            Interviewer: {slot.interviewer}
+                          </p>
+                          <p className="text-sm text-gray-600">
+                            Position:{" "}
+                            <span className="font-medium">
+                              {positionMap?.[slot.position] || slot.position}
+                            </span>
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-sm font-medium text-gray-900">
+                            {format(parseISO(slot.start), "HH:mm")} -{" "}
+                            {format(parseISO(slot.end), "HH:mm")}
+                          </p>
+                          <span
+                            className={`inline-block px-2 py-1 text-xs rounded-full mt-1 ${
+                              slot.status === "scheduled"
+                                ? "bg-green-100 text-green-800"
+                                : slot.status === "completed"
+                                ? "bg-blue-100 text-blue-800"
+                                : "bg-gray-100 text-gray-800"
+                            }`}
+                          >
+                            {slot.status}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               ))}
             </div>
@@ -230,7 +291,7 @@ const TimelineView = ({ timeline, positionMap }) => {
   );
 };
 
-const TableView = ({ schedules, positionMap }) => {
+const TableView = ({ schedules, positionMap, selectedDate }) => {
   if (!schedules || schedules.length === 0) {
     return (
       <div className="text-center py-12 text-gray-500">
@@ -238,6 +299,12 @@ const TableView = ({ schedules, positionMap }) => {
       </div>
     );
   }
+
+  const rows = selectedDate
+    ? schedules.filter(
+        (s) => (s.interview_date || s.start_time?.slice(0, 10)) === selectedDate
+      )
+    : schedules;
 
   return (
     <div className="overflow-x-auto">
@@ -262,7 +329,7 @@ const TableView = ({ schedules, positionMap }) => {
           </tr>
         </thead>
         <tbody className="bg-white divide-y divide-gray-200">
-          {schedules.map((schedule) => (
+          {rows.map((schedule) => (
             <tr key={schedule._id} className="hover:bg-gray-50">
               <td className="px-6 py-4 whitespace-nowrap">
                 <div>
@@ -283,7 +350,17 @@ const TableView = ({ schedules, positionMap }) => {
               </td>
               <td className="px-6 py-4 whitespace-nowrap">
                 <div className="text-sm">
-                  {format(parseISO(schedule.start_time), "MMM dd, HH:mm")} -
+                  <span className="text-gray-600 mr-2">
+                    {new Date(
+                      schedule.interview_date ||
+                        schedule.start_time.slice(0, 10)
+                    ).toLocaleDateString("vi-VN", {
+                      weekday: "short",
+                      day: "2-digit",
+                      month: "2-digit",
+                    })}
+                  </span>
+                  {format(parseISO(schedule.start_time), "HH:mm")} -
                   {format(parseISO(schedule.end_time), "HH:mm")}
                 </div>
               </td>
