@@ -3,6 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 import { algorithmsAPI } from "../services/api";
 import toast from "react-hot-toast";
 import { FiPlay, FiSettings } from "react-icons/fi";
+import { useCurrentCompany } from "../hooks/useCurrentCompany";
 
 const AlgorithmSettings = () => {
   const [selectedAlgorithm, setSelectedAlgorithm] = useState("GA");
@@ -15,11 +16,25 @@ const AlgorithmSettings = () => {
       TOURNAMENT_SIZE: 3,
       ELITISM_RATE: 0.1,
     },
-    SA: {
-      INITIAL_TEMP: 1000,
-      FINAL_TEMP: 0.1,
-      COOLING_RATE: 0.95,
-      MAX_ITERATIONS: 1000,
+    GA2: {
+      POPULATION_SIZE: 100,
+      GENERATIONS: 200,
+      CROSSOVER_RATE: 0.9,
+      MUTATION_RATE: 0.2,
+      ELITISM_RATE: 0.05,
+    },
+    GA3: {
+      POPULATION_SIZE: 120,
+      GENERATIONS: 250,
+      CROSSOVER_RATE: 0.85,
+      MUTATION_RATE: 0.12,
+    },
+    GA4: {
+      POPULATION_SIZE: 120,
+      GENERATIONS: 250,
+      CROSSOVER_RATE: 0.9,
+      MUTATION_RATE: 0.18,
+      LOCAL_SEARCH_RATE: 0.3,
     },
     WEIGHTS: {
       CONFLICT: 0.4,
@@ -32,6 +47,8 @@ const AlgorithmSettings = () => {
 
   const [isRunning, setIsRunning] = useState(false);
   const [result, setResult] = useState(null);
+
+  const { companyId } = useCurrentCompany();
 
   const runAlgorithm = useMutation({
     mutationFn: (data) => algorithmsAPI.run(data.algorithm, data.config),
@@ -49,7 +66,25 @@ const AlgorithmSettings = () => {
   const handleRun = () => {
     setIsRunning(true);
     setResult(null);
-    runAlgorithm.mutate({ algorithm: selectedAlgorithm, config });
+    // Pass only relevant sub-config (plus weights if GA base)
+    const sendConfig = {
+      [selectedAlgorithm]: config[selectedAlgorithm],
+      WEIGHTS: config.WEIGHTS,
+    };
+    // Read session and company from localStorage
+    const session_id =
+      localStorage.getItem("selected_session") ||
+      localStorage.getItem("active_session_id");
+    const company_id = localStorage.getItem("selectedCompany") || companyId;
+    if (!session_id) {
+      setIsRunning(false);
+      toast.error("Please select a Session first");
+      return;
+    }
+    runAlgorithm.mutate({
+      algorithm: selectedAlgorithm,
+      config: { config: sendConfig, session_id, company_id },
+    });
   };
 
   const handleConfigChange = (section, key, value) => {
@@ -79,22 +114,22 @@ const AlgorithmSettings = () => {
             <h3 className="text-lg font-semibold mb-4">Select Algorithm</h3>
             <div className="space-y-3">
               {[
+                { id: "GA", name: "GA (Base)", desc: "Heuristic + adaptive" },
                 {
-                  id: "GA",
-                  name: "Genetic Algorithm",
-                  desc: "Population-based optimization",
+                  id: "GA2",
+                  name: "GA2 (Uniform)",
+                  desc: "Uniform crossover variant",
                 },
                 {
-                  id: "GREEDY",
-                  name: "Greedy Algorithm",
-                  desc: "Fast heuristic approach",
+                  id: "GA3",
+                  name: "GA3 (Order)",
+                  desc: "Order crossover + rank selection",
                 },
                 {
-                  id: "SA",
-                  name: "Simulated Annealing",
-                  desc: "Probabilistic technique",
+                  id: "GA4",
+                  name: "GA4 (Hybrid)",
+                  desc: "Two-point + local search",
                 },
-                { id: "ALL", name: "Compare All", desc: "Run all algorithms" },
               ].map((algo) => (
                 <button
                   key={algo.id}
@@ -139,8 +174,8 @@ const AlgorithmSettings = () => {
               Configuration
             </h3>
 
-            {/* GA Parameters */}
-            {(selectedAlgorithm === "GA" || selectedAlgorithm === "ALL") && (
+            {/* GA Base Parameters */}
+            {selectedAlgorithm === "GA" && (
               <div className="mb-6">
                 <h4 className="font-medium text-gray-900 mb-3">
                   Genetic Algorithm
@@ -220,73 +255,95 @@ const AlgorithmSettings = () => {
               </div>
             )}
 
-            {/* SA Parameters */}
-            {(selectedAlgorithm === "SA" || selectedAlgorithm === "ALL") && (
+            {/* GA2 Parameters */}
+            {selectedAlgorithm === "GA2" && (
               <div className="mb-6">
-                <h4 className="font-medium text-gray-900 mb-3">
-                  Simulated Annealing
-                </h4>
+                <h4 className="font-medium text-gray-900 mb-3">GA2 Variant</h4>
                 <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Initial Temperature
-                    </label>
-                    <input
-                      type="number"
-                      value={config.SA.INITIAL_TEMP}
-                      onChange={(e) =>
-                        handleConfigChange("SA", "INITIAL_TEMP", e.target.value)
-                      }
-                      className="input"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Final Temperature
-                    </label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      value={config.SA.FINAL_TEMP}
-                      onChange={(e) =>
-                        handleConfigChange("SA", "FINAL_TEMP", e.target.value)
-                      }
-                      className="input"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Cooling Rate
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      max="1"
-                      value={config.SA.COOLING_RATE}
-                      onChange={(e) =>
-                        handleConfigChange("SA", "COOLING_RATE", e.target.value)
-                      }
-                      className="input"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Max Iterations
-                    </label>
-                    <input
-                      type="number"
-                      value={config.SA.MAX_ITERATIONS}
-                      onChange={(e) =>
-                        handleConfigChange(
-                          "SA",
-                          "MAX_ITERATIONS",
-                          e.target.value
-                        )
-                      }
-                      className="input"
-                    />
-                  </div>
+                  {[
+                    ["POPULATION_SIZE", "Population Size"],
+                    ["GENERATIONS", "Generations"],
+                    ["CROSSOVER_RATE", "Crossover Rate"],
+                    ["MUTATION_RATE", "Mutation Rate"],
+                    ["ELITISM_RATE", "Elitism Rate"],
+                  ].map(([key, label]) => (
+                    <div key={key}>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        {label}
+                      </label>
+                      <input
+                        type="number"
+                        step={key.includes("RATE") ? "0.01" : "1"}
+                        min="0"
+                        value={config.GA2[key]}
+                        onChange={(e) =>
+                          handleConfigChange("GA2", key, e.target.value)
+                        }
+                        className="input"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {/* GA3 Parameters */}
+            {selectedAlgorithm === "GA3" && (
+              <div className="mb-6">
+                <h4 className="font-medium text-gray-900 mb-3">GA3 Variant</h4>
+                <div className="grid grid-cols-2 gap-4">
+                  {[
+                    ["POPULATION_SIZE", "Population Size"],
+                    ["GENERATIONS", "Generations"],
+                    ["CROSSOVER_RATE", "Crossover Rate"],
+                    ["MUTATION_RATE", "Mutation Rate"],
+                  ].map(([key, label]) => (
+                    <div key={key}>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        {label}
+                      </label>
+                      <input
+                        type="number"
+                        step={key.includes("RATE") ? "0.01" : "1"}
+                        min="0"
+                        value={config.GA3[key]}
+                        onChange={(e) =>
+                          handleConfigChange("GA3", key, e.target.value)
+                        }
+                        className="input"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {/* GA4 Parameters */}
+            {selectedAlgorithm === "GA4" && (
+              <div className="mb-6">
+                <h4 className="font-medium text-gray-900 mb-3">GA4 Hybrid</h4>
+                <div className="grid grid-cols-2 gap-4">
+                  {[
+                    ["POPULATION_SIZE", "Population Size"],
+                    ["GENERATIONS", "Generations"],
+                    ["CROSSOVER_RATE", "Crossover Rate"],
+                    ["MUTATION_RATE", "Mutation Rate"],
+                    ["LOCAL_SEARCH_RATE", "Local Search Rate"],
+                  ].map(([key, label]) => (
+                    <div key={key}>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        {label}
+                      </label>
+                      <input
+                        type="number"
+                        step={key.includes("RATE") ? "0.01" : "1"}
+                        min="0"
+                        value={config.GA4[key]}
+                        onChange={(e) =>
+                          handleConfigChange("GA4", key, e.target.value)
+                        }
+                        className="input"
+                      />
+                    </div>
+                  ))}
                 </div>
               </div>
             )}

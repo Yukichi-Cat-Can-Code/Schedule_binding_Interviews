@@ -11,22 +11,26 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'interview_scheduler.settings')
 django.setup()
 
-from api.mongo_models import Position, InterviewSession, Applicant, Interviewer, Room
+from api.mongo_models import Position, InterviewSession, Applicant, Interviewer, Room, Company, Schedule, ScheduleResult
+from api.auth_utils import User
 
 
 def clear_all_data():
-    """Clear all existing data"""
+    """Clear all existing data (single-tenant demo mode)"""
     print("🗑️  Clearing existing data...")
+    Company.get_collection().delete_many({})
     Position.get_collection().delete_many({})
     InterviewSession.get_collection().delete_many({})
     Applicant.get_collection().delete_many({})
     Interviewer.get_collection().delete_many({})
     Room.get_collection().delete_many({})
+    Schedule.get_collection().delete_many({})
+    ScheduleResult.get_collection().delete_many({})
     print("✅ Data cleared")
 
 
-def create_positions():
-    """Create only the two required positions: Technical & Operation"""
+def create_positions(company_id):
+    """Create only the two required positions: Technical & Operation for given company"""
     print("\n📋 Creating positions ...")
     positions = [
         {
@@ -34,6 +38,7 @@ def create_positions():
             'code': 'Technical',
             'description': 'Technical / IT related interviews',
             'is_active': True,
+            'company_id': company_id,
             'created_at': datetime.now()
         },
         {
@@ -41,6 +46,7 @@ def create_positions():
             'code': 'Operation',
             'description': 'Operations / Logistics related interviews',
             'is_active': True,
+            'company_id': company_id,
             'created_at': datetime.now()
         }
     ]
@@ -49,7 +55,7 @@ def create_positions():
     print(f"✅ Created {len(positions)} positions (expected: 2)")
 
 
-def create_interview_sessions():
+def create_interview_sessions(company_id):
     print("\n📅 Creating interview sessions...")
     sessions = [
         {
@@ -60,7 +66,8 @@ def create_interview_sessions():
             'end_date': '2024-11-30',
             'description': 'Đợt tuyển thành viên CLB năm 2024',
             'is_active': False,
-            'created_at': datetime(2024, 11, 1)
+            'created_at': datetime(2024, 11, 1),
+            'company_id': company_id
         },
         {
             'name': 'Tuyển thành viên Gen 2025',
@@ -70,7 +77,8 @@ def create_interview_sessions():
             'end_date': '2025-11-30',
             'description': 'Đợt tuyển thành viên CLB năm 2025 - Quý 1',
             'is_active': True,
-            'created_at': datetime.now()
+            'created_at': datetime.now(),
+            'company_id': company_id
         }
     ]
     
@@ -96,10 +104,11 @@ def parse_time_slot(time_str):
     return None
 
 
-def create_applicants_from_csv():
+def create_applicants_from_csv(company_id):
     print("\n👥 Creating applicants (full provided lists)...")
 
-    active_session = InterviewSession.get_active_session()
+    # Use the active session for this specific company
+    active_session = InterviewSession.get_active_session(company_id)
     if not active_session:
         print("❌ No active interview session found")
         return
@@ -420,6 +429,7 @@ def create_applicants_from_csv():
             'preferred_time': data['preferred_time'],
             'notes': data['notes'],
             'status': 'pending',
+            'company_id': company_id,
             'created_at': datetime.now()
         }
         Applicant.create(applicant)
@@ -428,10 +438,11 @@ def create_applicants_from_csv():
     print(f"✅ Created {created_count} applicants (expected: {len(position_mapping)})")
 
 
-def create_interviewers():
+def create_interviewers(company_id):
     print("\n👨‍💼 Creating interviewers (Minh, Trân, Hải, Nhi, Tiến)...")
 
-    active_session = InterviewSession.get_active_session()
+    # Use the active session for this specific company
+    active_session = InterviewSession.get_active_session(company_id)
     if not active_session:
         print("❌ No active interview session found")
         return
@@ -449,6 +460,7 @@ def create_interviewers():
             'available_time': availability,
             'preferred_room': '102C1',
             'max_slots': 40,
+            'company_id': company_id,
             'created_at': datetime.now()
         },
         {
@@ -459,6 +471,7 @@ def create_interviewers():
             'available_time': availability,
             'preferred_room': '102C1',
             'max_slots': 40,
+            'company_id': company_id,
             'created_at': datetime.now()
         },
         {
@@ -469,6 +482,7 @@ def create_interviewers():
             'available_time': 'T7: 13:55-16:05, 18:30-20:35',
             'preferred_room': '102C1',
             'max_slots': 25,
+            'company_id': company_id,
             'created_at': datetime.now()
         },
         {
@@ -479,6 +493,7 @@ def create_interviewers():
             'available_time': 'T7: 13:30-18:05, 18:30-20:10',
             'preferred_room': '102C1',
             'max_slots': 30,
+            'company_id': company_id,
             'created_at': datetime.now()
         },
         {
@@ -489,6 +504,7 @@ def create_interviewers():
             'available_time': 'T7: 18:55-19:20',
             'preferred_room': '102C1',
             'max_slots': 5,
+            'company_id': company_id,
             'created_at': datetime.now()
         }
     ]
@@ -499,10 +515,11 @@ def create_interviewers():
     print(f"✅ Created {len(interviewers)} interviewers (expected: 5)")
 
 
-def create_rooms():
+def create_rooms(company_id):
     print("\n🏢 Creating room 102C1 only...")
 
-    active_session = InterviewSession.get_active_session()
+    # Use the active session for this specific company
+    active_session = InterviewSession.get_active_session(company_id)
     if not active_session:
         print("❌ No active interview session found")
         return
@@ -518,6 +535,7 @@ def create_rooms():
             'end_time': '20:55',    # Matches latest slot in schedule
             'preferred_position': '',  # Accept both positions
             'capacity': 4,
+            'company_id': company_id,
             'created_at': datetime.now()
         }
     ]
@@ -541,22 +559,124 @@ def main():
     
     try:
         clear_all_data()
-        create_positions()
-        session_ids = create_interview_sessions()
-        create_applicants_from_csv()
-        create_interviewers()
-        create_rooms()
+        # Create first demo company (DEMO)
+        company_id = Company.create({'name': 'Demo Company', 'code': 'DEMO', 'created_at': datetime.now()})
+        create_positions(company_id)
+        session_ids = create_interview_sessions(company_id)
+        create_applicants_from_csv(company_id)
+        create_interviewers(company_id)
+        create_rooms(company_id)
+
+        # Create second demo company (SECOND)
+        company2_id = Company.create({'name': 'Second Demo Company', 'code': 'SECOND', 'created_at': datetime.now()})
+        # Reuse simple positions for second company
+        create_positions(company2_id)
+        # Simple sessions for second company
+        print("\n📅 Creating interview sessions for Second Demo Company...")
+        InterviewSession.create({
+            'name': 'SecondCo Recruitment 2025',
+            'code': 'SECOND_2025_Q1',
+            'year': 2025,
+            'start_date': '2025-12-01',
+            'end_date': '2025-12-31',
+            'description': 'Recruitment campaign for Second Demo Company',
+            'is_active': True,
+            'created_at': datetime.now(),
+            'company_id': company2_id,
+        })
+        # 1-2 rooms only for second company
+        print("\n🏢 Creating rooms for Second Demo Company...")
+        for room_code in ['201A', '202A']:
+            Room.create({
+                'session_id': None,
+                'room_code': room_code,
+                'room_name': f'SecondCo Room {room_code}',
+                'start_time': '09:00',
+                'end_time': '18:00',
+                'preferred_position': '',
+                'capacity': 4,
+                'company_id': company2_id,
+                'created_at': datetime.now(),
+            })
+
+        # Create ~30 sample users for second company (including admin/manager)
+        sample_users = [
+            {"username": "second_admin", "role": "admin"},
+            {"username": "second_manager", "role": "manager"},
+        ]
+        # Add 28 more generic users with role manager
+        for i in range(1, 29):
+            sample_users.append({
+                "username": f"second_user_{i}",
+                "role": "manager",
+            })
+
+        print("\n👤 Creating sample users for Second Demo Company (SECOND)...")
+        for u in sample_users:
+            if not User.find_one({'username': u["username"]}):
+                hashed = User.hash_password('second123')
+                User.create({
+                    'username': u["username"],
+                    'password': hashed,
+                    'company_id': company2_id,
+                    'role': u["role"],
+                    'created_at': datetime.now(),
+                })
+        try:
+            # Admin user for first company
+            if not User.find_one({'username': 'demo'}):
+                hashed = User.hash_password('demo123')
+                User.create({
+                    'username': 'demo',
+                    'password': hashed,
+                    'company_id': company_id,
+                    'role': 'admin',
+                    'created_at': datetime.now(),
+                })
+
+            # IT / manager user
+            if not User.find_one({'username': 'it_manager'}):
+                hashed = User.hash_password('manager123')
+                User.create({
+                    'username': 'it_manager',
+                    'password': hashed,
+                    'company_id': company_id,
+                    'role': 'manager',
+                    'created_at': datetime.now(),
+                })
+
+            # Additional manager for demonstration
+            if not User.find_one({'username': 'hr_manager'}):
+                hashed = User.hash_password('manager123')
+                User.create({
+                    'username': 'hr_manager',
+                    'password': hashed,
+                    'company_id': company_id,
+                    'role': 'manager',
+                    'created_at': datetime.now(),
+                })
+        except Exception as e:
+            print(f"⚠️  Could not create demo users: {e}")
         
         print("\n" + "=" * 60)
         print("✅ SAMPLE DATA IMPORT COMPLETED SUCCESSFULLY!")
         print("=" * 60)
         print("\n📊 Summary:")
+        print(f"   - Company: {Company.count()}")
         print(f"   - Positions: {Position.count()}")
         print(f"   - Interview Sessions: {InterviewSession.count()}")
         print(f"   - Applicants: {Applicant.count()}")
         print(f"   - Interviewers: {Interviewer.count()}")
         print(f"   - Rooms: {Room.count()}")
         print("\n🚀 You can now run the scheduling algorithms!")
+        print("\n🔐 Demo users (Company DEMO):")
+        print("   - Admin:   username=demo,       password=demo123")
+        print("   - Manager: username=it_manager, password=manager123")
+        print("   - Manager: username=hr_manager, password=manager123")
+        print("\n🔐 Demo users (Company SECOND):")
+        print("   - Admin:   username=second_admin,  password=second123")
+        print("   - Manager: username=second_manager, password=second123")
+        print("   - Managers: username=second_user_1 .. second_user_28, password=second123")
         
     except Exception as e:
         print(f"\n❌ Error during import: {e}")

@@ -2,6 +2,10 @@ from django.urls import path
 from api import views
 
 urlpatterns = [
+    # Companies
+    path('companies/', views.CompanyAPIView.as_view(), name='company-list'),
+    path('companies/current/', views.current_company, name='company-current'),
+    path('companies/<str:pk>/', views.CompanyAPIView.as_view(), name='company-detail'),
     # Positions
     path('positions/', views.PositionAPIView.as_view(), name='position-list'),
     path('positions/<str:pk>/', views.PositionAPIView.as_view(), name='position-detail'),
@@ -11,6 +15,7 @@ urlpatterns = [
     path('sessions/active/', views.get_active_session, name='session-active'),  
     path('sessions/<str:pk>/', views.InterviewSessionAPIView.as_view(), name='session-detail'),
     path('sessions/<str:pk>/activate/', views.set_active_session, name='session-activate'),
+    path('sessions/<str:pk>/membership/', views.update_session_membership, name='session-membership'),
     
     # Applicants
     path('applicants/', views.ApplicantAPIView.as_view(), name='applicant-list'),
@@ -33,11 +38,17 @@ urlpatterns = [
     # Algorithm Config
     path('configs/', views.AlgorithmConfigAPIView.as_view(), name='config-list'),
     path('configs/<str:pk>/', views.AlgorithmConfigAPIView.as_view(), name='config-detail'),
+    path('configs/<str:pk>/activate/', views.activate_algorithm_config, name='config-activate'),
+
+    # Auth
+    path('auth/register/', views.register_user, name='auth-register'),
+    path('auth/login/', views.login_user, name='auth-login'),
     
     # Data Management
     path('data/import/', views.import_excel, name='import-excel'),
     path('data/export/', views.export_schedules, name='export-schedules'),
     path('data/statistics/', views.dashboard_stats, name='dashboard-stats'),
+    path('data/logs/', views.action_logs, name='action-logs'),
     
     # Algorithms
     path('algorithm/genetic/', views.run_genetic_algorithm, name='run-genetic'),

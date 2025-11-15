@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   dataAPI,
@@ -7,15 +7,39 @@ import {
   roomsAPI,
   positionsAPI,
   sessionsAPI,
+  companiesAPI,
 } from "../services/api";
 import toast from "react-hot-toast";
 import { FiUpload, FiDownload, FiPlus, FiX } from "react-icons/fi";
+import { useCurrentCompany } from "../hooks/useCurrentCompany";
 
 const DataManagement = () => {
   const [activeTab, setActiveTab] = useState("applicants");
   const [isUploading, setIsUploading] = useState(false);
+  const { companyId: authCompanyId, company } = useCurrentCompany();
+  // Selected session (user choice) separate from active session flag
+  const [selectedSessionId, setSelectedSessionId] = useState(
+    () => localStorage.getItem("selected_session") || null
+  );
+  // Company selection is always driven from authCompanyId (current company)
+  const [selectedCompanyId, setSelectedCompanyId] = useState("");
+
+  // Companies list for selector
+  const { data: companies } = useQuery({
+    queryKey: ["companies"],
+    queryFn: () => companiesAPI.getAll().then((r) => r.data),
+  });
+
+  // Keep selectedCompanyId in sync with current auth company
+  useEffect(() => {
+    if (!authCompanyId) return;
+    // Clean up old localStorage keys that may conflict
+    localStorage.removeItem("selectedCompany");
+    localStorage.removeItem("company_id");
+    setSelectedCompanyId(authCompanyId);
+  }, [authCompanyId]);
   const queryClient = useQueryClient();
-  // Active session (for per-session import/export)
+  // Active session (backend-defined current session)
   const { data: activeSession } = useQuery({
     queryKey: ["sessions", "active"],
     queryFn: () =>
@@ -25,22 +49,44 @@ const DataManagement = () => {
         .catch(() => null),
   });
 
+  // All sessions for user selection, filtered by selected company
+  const { data: allSessions } = useQuery({
+    queryKey: ["sessions", selectedCompanyId],
+    enabled: !!selectedCompanyId,
+    queryFn: () =>
+      sessionsAPI
+        .getAll({ company_id: selectedCompanyId })
+        .then((res) => res.data),
+  });
+
+  // No auto-select session here; user chooses explicitly.
+
+  // Resolve selected session (require explicit selection; no fallback)
+  const selectedSession = useMemo(() => {
+    if (!allSessions?.length || !selectedSessionId) return null;
+    return allSessions.find((s) => s._id === selectedSessionId) || null;
+  }, [allSessions, selectedSessionId]);
+
   const tabs = [
+    { id: "sessions", label: "Interview Sessions" },
     { id: "applicants", label: "Applicants" },
     { id: "interviewers", label: "Interviewers" },
     { id: "rooms", label: "Rooms" },
     { id: "positions", label: "Positions" },
-    { id: "sessions", label: "Interview Sessions" },
   ];
 
   // Import Excel
   const handleImport = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (!selectedSession?._id) {
+      toast.error("Please select a session first");
+      return;
+    }
 
     setIsUploading(true);
     try {
-      await dataAPI.importExcel(file, "all", activeSession?._id);
+      await dataAPI.importExcel(file, "all", selectedSession._id);
       toast.success("Data imported successfully!");
       queryClient.invalidateQueries();
     } catch (error) {
@@ -52,17 +98,45 @@ const DataManagement = () => {
 
   // Export Excel
   const handleExport = async () => {
+    if (!selectedSession?._id) {
+      toast.error("Please select a session first");
+      return;
+    }
     try {
-      const response = await dataAPI.exportExcel(activeSession?._id);
+      const response = await dataAPI.exportExcel(selectedSession._id);
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement("a");
       link.href = url;
-      link.setAttribute(
-        "download",
-        activeSession?.code
-          ? `schedules_${activeSession.code}.xlsx`
-          : "interview_data.xlsx"
-      );
+      const cd =
+        response.headers?.["content-disposition"] ||
+        response.headers?.["Content-Disposition"] ||
+        "";
+      let filename = null;
+      // RFC5987 filename*
+      const star = cd.match(/filename\*=UTF-8''([^;]+)/i);
+      if (star && star[1]) {
+        try {
+          filename = decodeURIComponent(star[1]);
+        } catch {
+          /* ignore */
+        }
+      }
+      if (!filename) {
+        const m = cd.match(/filename="?([^";]+)"?/i);
+        if (m && m[1]) filename = m[1];
+      }
+      if (!filename) {
+        const companyName =
+          (companies || []).find((c) => c._id === selectedCompanyId)?.name ||
+          "Company";
+        const period = `${selectedSession.start_date}_${selectedSession.end_date}`;
+        // Use double underscore as separators to match backend
+        filename = `${
+          selectedSession.name || selectedSession.code || "Session"
+        }__${period}__${companyName}.xlsx`;
+      }
+      filename = filename.replace(/[\\/:*?"<>|]/g, "-");
+      link.setAttribute("download", filename);
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -76,58 +150,126 @@ const DataManagement = () => {
     <div className="space-y-6">
       {/* Page Title */}
       <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-3xl font-bold text-gray-900">Data Management</h2>
-          <p className="text-gray-600 mt-1">
-            Manage applicants, interviewers, and rooms
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h2 className="text-3xl font-bold text-gray-900">
+              Data Management
+            </h2>
+          </div>
+          <p className="text-gray-600">
+            Manage data scoped to an interview session
           </p>
+          <div className="flex items-center space-x-3">
+            <span className="text-sm font-medium text-gray-700">Company:</span>
+            <span className="px-2 py-1 text-xs rounded bg-indigo-100 text-indigo-700 font-medium">
+              {company?.name || company?.code || "Your Company"}
+            </span>
+            <label className="text-sm font-medium text-gray-700">
+              Session:
+            </label>
+            <select
+              className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              value={selectedSessionId || ""}
+              disabled={!selectedCompanyId}
+              onChange={(e) => {
+                const val = e.target.value || null;
+                setSelectedSessionId(val);
+                if (val) localStorage.setItem("selected_session", val);
+                else localStorage.removeItem("selected_session");
+              }}
+            >
+              <option value="">
+                {selectedCompanyId ? "Select session" : "Select company first"}
+              </option>
+              {allSessions?.map((s) => (
+                <option key={s._id} value={s._id}>
+                  {s.code || s.name} {s.is_active ? "(active)" : ""}
+                </option>
+              ))}
+            </select>
+            {selectedSession && (
+              <>
+                <span className="text-xs px-2 py-1 rounded bg-blue-100 text-blue-700">
+                  {selectedSession.name}
+                </span>
+                <SessionMembershipButton session={selectedSession} />
+              </>
+            )}
+          </div>
         </div>
         <div className="flex space-x-3">
-          <label className="btn btn-secondary cursor-pointer">
+          <label
+            className={`btn btn-secondary cursor-pointer ${
+              !selectedSession ? "opacity-50 pointer-events-none" : ""
+            }`}
+          >
             <FiUpload className="w-5 h-5" />
             <span>Import Excel</span>
             <input
               type="file"
               accept=".xlsx,.xls"
-              onChange={handleImport}
               className="hidden"
-              disabled={isUploading}
+              disabled={!selectedSession}
+              onChange={handleImport}
             />
           </label>
-          <button onClick={handleExport} className="btn btn-secondary">
+          <button
+            onClick={handleExport}
+            className={`btn btn-primary flex items-center space-x-2 ${
+              !selectedSession ? "opacity-50 pointer-events-none" : ""
+            }`}
+            disabled={!selectedSession}
+          >
             <FiDownload className="w-5 h-5" />
             <span>Export Excel</span>
           </button>
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="bg-white rounded-lg shadow">
-        <div className="border-b">
-          <div className="flex space-x-8 px-6">
-            {tabs.map((tab) => (
+      <div className="p-6">
+        {/* Tab Navigation */}
+        <div className="flex flex-wrap gap-4 mb-6 border-b pb-2">
+          {tabs.map((tab) => {
+            const disabled =
+              tab.id !== "sessions" &&
+              !selectedSession &&
+              tab.id !== "sessions";
+            return (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`py-4 px-3 border-b-2 font-medium text-sm transition-colors ${
+                onClick={() => !disabled && setActiveTab(tab.id)}
+                className={`px-3 py-2 text-sm font-medium rounded-md transition-colors ${
                   activeTab === tab.id
-                    ? "border-blue-500 text-blue-600"
-                    : "border-transparent text-gray-600 hover:text-gray-900"
-                }`}
+                    ? "bg-blue-600 text-white shadow"
+                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                } ${disabled ? "opacity-40 cursor-not-allowed" : ""}`}
+                type="button"
               >
                 {tab.label}
               </button>
-            ))}
+            );
+          })}
+        </div>
+        {!selectedSession && activeTab !== "sessions" ? (
+          <div className="p-4 mb-4 bg-yellow-50 border border-yellow-200 rounded text-sm text-yellow-700">
+            Please select a company and then a session to view and manage data.
           </div>
-        </div>
-
-        <div className="p-6">
-          {activeTab === "applicants" && <ApplicantsTable />}
-          {activeTab === "interviewers" && <InterviewersTable />}
-          {activeTab === "rooms" && <RoomsTable />}
-          {activeTab === "positions" && <PositionsTable />}
-          {activeTab === "sessions" && <SessionsTable />}
-        </div>
+        ) : null}
+        {activeTab === "applicants" && selectedSession && (
+          <ApplicantsTable selectedSession={selectedSession} />
+        )}
+        {activeTab === "interviewers" && selectedSession && (
+          <InterviewersTable selectedSession={selectedSession} />
+        )}
+        {activeTab === "rooms" && selectedSession && (
+          <RoomsTable selectedSession={selectedSession} />
+        )}
+        {activeTab === "positions" && selectedSession && (
+          <PositionsTable selectedSession={selectedSession} />
+        )}
+        {activeTab === "sessions" && (
+          <SessionsTable companyId={selectedCompanyId} />
+        )}
       </div>
 
       {/* Import Instructions */}
@@ -177,7 +319,7 @@ const DataManagement = () => {
 };
 
 // Sub-components for tables
-const ApplicantsTable = () => {
+const ApplicantsTable = ({ selectedSession }) => {
   const [showModal, setShowModal] = useState(false);
   const [editingApplicant, setEditingApplicant] = useState(null);
   const [formData, setFormData] = useState({
@@ -189,9 +331,17 @@ const ApplicantsTable = () => {
   });
   const queryClient = useQueryClient();
 
-  const { data: applicants, isLoading } = useQuery({
-    queryKey: ["applicants"],
-    queryFn: () => applicantsAPI.getAll().then((res) => res.data),
+  const sessionId = selectedSession?._id || null;
+  // Reset modal/editing when session changes
+  useEffect(() => {
+    setShowModal(false);
+    setEditingApplicant(null);
+  }, [sessionId]);
+  const { data: filteredApplicants, isLoading } = useQuery({
+    queryKey: ["applicants", sessionId],
+    enabled: !!sessionId,
+    queryFn: () =>
+      applicantsAPI.getAll({ session_id: sessionId }).then((res) => res.data),
   });
 
   // Dynamic positions
@@ -200,11 +350,25 @@ const ApplicantsTable = () => {
     queryFn: () => positionsAPI.getAll().then((res) => res.data),
   });
 
+  // Add applicant (with session attach if selected)
   const addMutation = useMutation({
-    mutationFn: (data) => applicantsAPI.create(data),
+    mutationFn: async (data) => {
+      const res = await applicantsAPI.create(data);
+      if (selectedSession?._id) {
+        const newId = res.data._id;
+        const currentIds = selectedSession.applicant_ids || [];
+        if (!currentIds.includes(newId)) {
+          await sessionsAPI.update(selectedSession._id, {
+            applicant_ids: [...currentIds, newId],
+          });
+        }
+      }
+      return res;
+    },
     onSuccess: () => {
       toast.success("Applicant added successfully!");
       queryClient.invalidateQueries(["applicants"]);
+      queryClient.invalidateQueries(["sessions"]);
       closeModal();
     },
     onError: (error) => {
@@ -225,13 +389,36 @@ const ApplicantsTable = () => {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id) => applicantsAPI.delete(id),
+    mutationFn: async (id) => {
+      // Confirm if part of session
+      const inSession = selectedSession?.applicant_ids?.includes(id);
+      if (inSession) {
+        if (
+          !window.confirm("Applicant belongs to this session. Delete anyway?")
+        ) {
+          throw new Error("Deletion cancelled");
+        }
+      }
+      await applicantsAPI.delete(id);
+      if (inSession) {
+        const newIds = selectedSession.applicant_ids.filter(
+          (aid) => aid !== id
+        );
+        await sessionsAPI.update(selectedSession._id, {
+          applicant_ids: newIds,
+        });
+      }
+      return id;
+    },
     onSuccess: () => {
       toast.success("Applicant deleted successfully!");
       queryClient.invalidateQueries(["applicants"]);
+      queryClient.invalidateQueries(["sessions"]);
     },
     onError: (error) => {
-      toast.error(error.message || "Failed to delete applicant");
+      if (error.message !== "Deletion cancelled") {
+        toast.error(error.message || "Failed to delete applicant");
+      }
     },
   });
 
@@ -268,13 +455,14 @@ const ApplicantsTable = () => {
     }
   };
 
+  if (!sessionId) return <div>Please select a session to view applicants.</div>;
   if (isLoading) return <div>Loading...</div>;
 
   return (
     <div>
       <div className="flex justify-between items-center mb-4">
         <h3 className="text-lg font-semibold">
-          Applicants ({applicants?.length || 0})
+          Applicants ({filteredApplicants.length || 0})
         </h3>
         <button onClick={() => setShowModal(true)} className="btn btn-primary">
           <FiPlus className="w-5 h-5" />
@@ -303,7 +491,7 @@ const ApplicantsTable = () => {
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-            {applicants?.map((applicant) => (
+            {filteredApplicants.map((applicant) => (
               <tr key={applicant._id}>
                 <td className="px-6 py-4 whitespace-nowrap">
                   {applicant.full_name}
@@ -467,7 +655,7 @@ const ApplicantsTable = () => {
   );
 };
 
-const InterviewersTable = () => {
+const InterviewersTable = ({ selectedSession }) => {
   const [showModal, setShowModal] = useState(false);
   const [editingInterviewer, setEditingInterviewer] = useState(null);
   const [formData, setFormData] = useState({
@@ -480,9 +668,16 @@ const InterviewersTable = () => {
   });
   const queryClient = useQueryClient();
 
-  const { data: interviewers, isLoading } = useQuery({
-    queryKey: ["interviewers"],
-    queryFn: () => interviewersAPI.getAll().then((res) => res.data),
+  const sessionId = selectedSession?._id || null;
+  useEffect(() => {
+    setShowModal(false);
+    setEditingInterviewer(null);
+  }, [sessionId]);
+  const { data: filteredInterviewers, isLoading } = useQuery({
+    queryKey: ["interviewers", sessionId],
+    enabled: !!sessionId,
+    queryFn: () =>
+      interviewersAPI.getAll({ session_id: sessionId }).then((res) => res.data),
   });
 
   // Dynamic positions
@@ -491,11 +686,25 @@ const InterviewersTable = () => {
     queryFn: () => positionsAPI.getAll().then((res) => res.data),
   });
 
+  // Add interviewer (and attach to session if selected)
   const addMutation = useMutation({
-    mutationFn: (data) => interviewersAPI.create(data),
+    mutationFn: async (data) => {
+      const res = await interviewersAPI.create(data);
+      if (selectedSession?._id) {
+        const newId = res.data._id;
+        const currentIds = selectedSession.interviewer_ids || [];
+        if (!currentIds.includes(newId)) {
+          await sessionsAPI.update(selectedSession._id, {
+            interviewer_ids: [...currentIds, newId],
+          });
+        }
+      }
+      return res;
+    },
     onSuccess: () => {
       toast.success("Interviewer added successfully!");
       queryClient.invalidateQueries(["interviewers"]);
+      queryClient.invalidateQueries(["sessions"]);
       closeModal();
     },
     onError: (error) => {
@@ -516,13 +725,35 @@ const InterviewersTable = () => {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id) => interviewersAPI.delete(id),
+    mutationFn: async (id) => {
+      const inSession = selectedSession?.interviewer_ids?.includes(id);
+      if (inSession) {
+        if (
+          !window.confirm("Interviewer belongs to this session. Delete anyway?")
+        ) {
+          throw new Error("Deletion cancelled");
+        }
+      }
+      await interviewersAPI.delete(id);
+      if (inSession) {
+        const newIds = selectedSession.interviewer_ids.filter(
+          (iid) => iid !== id
+        );
+        await sessionsAPI.update(selectedSession._id, {
+          interviewer_ids: newIds,
+        });
+      }
+      return id;
+    },
     onSuccess: () => {
       toast.success("Interviewer deleted successfully!");
       queryClient.invalidateQueries(["interviewers"]);
+      queryClient.invalidateQueries(["sessions"]);
     },
     onError: (error) => {
-      toast.error(error.message || "Failed to delete interviewer");
+      if (error.message !== "Deletion cancelled") {
+        toast.error(error.message || "Failed to delete interviewer");
+      }
     },
   });
 
@@ -561,13 +792,15 @@ const InterviewersTable = () => {
     }
   };
 
+  if (!sessionId)
+    return <div>Please select a session to view interviewers.</div>;
   if (isLoading) return <div>Loading...</div>;
 
   return (
     <div>
       <div className="flex justify-between items-center mb-4">
         <h3 className="text-lg font-semibold">
-          Interviewers ({interviewers?.length || 0})
+          Interviewers ({filteredInterviewers.length})
         </h3>
         <button onClick={() => setShowModal(true)} className="btn btn-primary">
           <FiPlus className="w-5 h-5" />
@@ -596,7 +829,7 @@ const InterviewersTable = () => {
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-            {interviewers?.map((interviewer) => (
+            {filteredInterviewers.map((interviewer) => (
               <tr key={interviewer._id}>
                 <td className="px-6 py-4 whitespace-nowrap">
                   {interviewer.full_name}
@@ -777,7 +1010,7 @@ const InterviewersTable = () => {
   );
 };
 
-const RoomsTable = () => {
+const RoomsTable = ({ selectedSession }) => {
   const [showModal, setShowModal] = useState(false);
   const [editingRoom, setEditingRoom] = useState(null);
   const [formData, setFormData] = useState({
@@ -789,9 +1022,16 @@ const RoomsTable = () => {
   });
   const queryClient = useQueryClient();
 
-  const { data: rooms, isLoading } = useQuery({
-    queryKey: ["rooms"],
-    queryFn: () => roomsAPI.getAll().then((res) => res.data),
+  const sessionId = selectedSession?._id || null;
+  useEffect(() => {
+    setShowModal(false);
+    setEditingRoom(null);
+  }, [sessionId]);
+  const { data: filteredRooms, isLoading } = useQuery({
+    queryKey: ["rooms", sessionId],
+    enabled: !!sessionId,
+    queryFn: () =>
+      roomsAPI.getAll({ session_id: sessionId }).then((res) => res.data),
   });
 
   // Dynamic positions for preferred_position
@@ -801,10 +1041,23 @@ const RoomsTable = () => {
   });
 
   const addMutation = useMutation({
-    mutationFn: (data) => roomsAPI.create(data),
+    mutationFn: async (data) => {
+      const res = await roomsAPI.create(data);
+      if (selectedSession?._id) {
+        const newId = res.data._id;
+        const currentIds = selectedSession.room_ids || [];
+        if (!currentIds.includes(newId)) {
+          await sessionsAPI.update(selectedSession._id, {
+            room_ids: [...currentIds, newId],
+          });
+        }
+      }
+      return res;
+    },
     onSuccess: () => {
       toast.success("Room added successfully!");
       queryClient.invalidateQueries(["rooms"]);
+      queryClient.invalidateQueries(["sessions"]);
       closeModal();
     },
     onError: (error) => {
@@ -825,13 +1078,29 @@ const RoomsTable = () => {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id) => roomsAPI.delete(id),
+    mutationFn: async (id) => {
+      const inSession = selectedSession?.room_ids?.includes(id);
+      if (inSession) {
+        if (!window.confirm("Room belongs to this session. Delete anyway?")) {
+          throw new Error("Deletion cancelled");
+        }
+      }
+      await roomsAPI.delete(id);
+      if (inSession) {
+        const newIds = selectedSession.room_ids.filter((rid) => rid !== id);
+        await sessionsAPI.update(selectedSession._id, { room_ids: newIds });
+      }
+      return id;
+    },
     onSuccess: () => {
       toast.success("Room deleted successfully!");
       queryClient.invalidateQueries(["rooms"]);
+      queryClient.invalidateQueries(["sessions"]);
     },
     onError: (error) => {
-      toast.error(error.message || "Failed to delete room");
+      if (error.message !== "Deletion cancelled") {
+        toast.error(error.message || "Failed to delete room");
+      }
     },
   });
 
@@ -868,12 +1137,17 @@ const RoomsTable = () => {
     }
   };
 
+  if (!sessionId) return <div>Please select a session to view rooms.</div>;
   if (isLoading) return <div>Loading...</div>;
+
+  // existing code continues
 
   return (
     <div>
       <div className="flex justify-between items-center mb-4">
-        <h3 className="text-lg font-semibold">Rooms ({rooms?.length || 0})</h3>
+        <h3 className="text-lg font-semibold">
+          Rooms ({filteredRooms.length})
+        </h3>
         <button onClick={() => setShowModal(true)} className="btn btn-primary">
           <FiPlus className="w-5 h-5" />
           <span>Add Room</span>
@@ -901,7 +1175,7 @@ const RoomsTable = () => {
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-            {rooms?.map((room) => (
+            {filteredRooms.map((room) => (
               <tr key={room._id}>
                 <td className="px-6 py-4 whitespace-nowrap font-medium">
                   {room.room_code}
@@ -1072,7 +1346,7 @@ const RoomsTable = () => {
   );
 };
 
-const PositionsTable = () => {
+const PositionsTable = ({ selectedSession }) => {
   const [showModal, setShowModal] = useState(false);
   const [editingPosition, setEditingPosition] = useState(null);
   const [formData, setFormData] = useState({
@@ -1088,11 +1362,35 @@ const PositionsTable = () => {
     queryFn: () => positionsAPI.getAll().then((res) => res.data),
   });
 
+  useEffect(() => {
+    setShowModal(false);
+    setEditingPosition(null);
+  }, [selectedSession?._id]);
+
+  const filteredPositions = useMemo(() => {
+    if (!selectedSession?.position_ids?.length) return positions || [];
+    const setIds = new Set(selectedSession.position_ids.map(String));
+    return (positions || []).filter((p) => setIds.has(String(p._id)));
+  }, [positions, selectedSession]);
+
   const addMutation = useMutation({
-    mutationFn: (data) => positionsAPI.create(data),
+    mutationFn: async (data) => {
+      const res = await positionsAPI.create(data);
+      if (selectedSession?._id) {
+        const newId = res.data._id;
+        const currentIds = selectedSession.position_ids || [];
+        if (!currentIds.includes(newId)) {
+          await sessionsAPI.update(selectedSession._id, {
+            position_ids: [...currentIds, newId],
+          });
+        }
+      }
+      return res;
+    },
     onSuccess: () => {
       toast.success("Position added successfully!");
       queryClient.invalidateQueries(["positions"]);
+      queryClient.invalidateQueries(["sessions"]);
       closeModal();
     },
     onError: (error) => {
@@ -1113,13 +1411,31 @@ const PositionsTable = () => {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id) => positionsAPI.delete(id),
+    mutationFn: async (id) => {
+      const inSession = selectedSession?.position_ids?.includes(id);
+      if (inSession) {
+        if (
+          !window.confirm("Position belongs to this session. Delete anyway?")
+        ) {
+          throw new Error("Deletion cancelled");
+        }
+      }
+      await positionsAPI.delete(id);
+      if (inSession) {
+        const newIds = selectedSession.position_ids.filter((pid) => pid !== id);
+        await sessionsAPI.update(selectedSession._id, { position_ids: newIds });
+      }
+      return id;
+    },
     onSuccess: () => {
       toast.success("Position deleted successfully!");
       queryClient.invalidateQueries(["positions"]);
+      queryClient.invalidateQueries(["sessions"]);
     },
     onError: (error) => {
-      toast.error(error.message || "Failed to delete position");
+      if (error.message !== "Deletion cancelled") {
+        toast.error(error.message || "Failed to delete position");
+      }
     },
   });
 
@@ -1160,7 +1476,7 @@ const PositionsTable = () => {
     <div>
       <div className="flex justify-between items-center mb-4">
         <h3 className="text-lg font-semibold">
-          Positions ({positions?.length || 0})
+          Positions ({filteredPositions.length})
         </h3>
         <button onClick={() => setShowModal(true)} className="btn btn-primary">
           <FiPlus className="w-5 h-5" />
@@ -1189,7 +1505,7 @@ const PositionsTable = () => {
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-            {positions?.map((position) => (
+            {filteredPositions.map((position) => (
               <tr key={position._id}>
                 <td className="px-6 py-4 whitespace-nowrap font-medium">
                   {position.code}
@@ -1655,6 +1971,401 @@ const SessionsTable = () => {
           </div>
         </div>
       )}
+    </div>
+  );
+};
+
+// Membership management button and modal
+const SessionMembershipButton = ({ session }) => {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button className="btn btn-secondary" onClick={() => setOpen(true)}>
+        Manage Membership
+      </button>
+      {open && (
+        <SessionMembershipModal
+          session={session}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </>
+  );
+};
+
+const SessionMembershipModal = ({ session, onClose }) => {
+  const queryClient = useQueryClient();
+  const sessionId = session?._id;
+  const [activeTab, setActiveTab] = useState("applicants");
+  const [search, setSearch] = useState("");
+  const [showAll, setShowAll] = useState(true);
+  const [positionFilter, setPositionFilter] = useState("");
+
+  // Live selection sets (used for preview and filtering when Scope = "In Session")
+  const [selApplicants, setSelApplicants] = useState(
+    new Set((session.applicant_ids || []).map(String))
+  );
+  const [selInterviewers, setSelInterviewers] = useState(
+    new Set((session.interviewer_ids || []).map(String))
+  );
+  const [selRooms, setSelRooms] = useState(
+    new Set((session.room_ids || []).map(String))
+  );
+  const [selPositions, setSelPositions] = useState(
+    new Set((session.position_ids || []).map(String))
+  );
+
+  const { data: allApplicants } = useQuery({
+    queryKey: ["applicants_pool"],
+    queryFn: () => applicantsAPI.getAll().then((r) => r.data),
+  });
+  const { data: allInterviewers } = useQuery({
+    queryKey: ["interviewers_pool"],
+    queryFn: () => interviewersAPI.getAll().then((r) => r.data),
+  });
+  const { data: allRooms } = useQuery({
+    queryKey: ["rooms_pool"],
+    queryFn: () => roomsAPI.getAll().then((r) => r.data),
+  });
+  const { data: allPositions } = useQuery({
+    queryKey: ["positions_pool"],
+    queryFn: () => positionsAPI.getAll().then((r) => r.data),
+  });
+
+  // Derived sets for filtering (session membership vs all)
+  const sessionApplicantIds = new Set(
+    (session.applicant_ids || []).map(String)
+  );
+  const sessionInterviewerIds = new Set(
+    (session.interviewer_ids || []).map(String)
+  );
+  const sessionRoomIds = new Set((session.room_ids || []).map(String));
+  const sessionPositionIds = new Set((session.position_ids || []).map(String));
+
+  const normalizeSearch = (v) => v.trim().toLowerCase();
+  const s = normalizeSearch(search);
+
+  // Filtering logic; when showAll=false use current selection sets (live preview), not persisted session membership.
+  const applyFilters = (items, liveSet, keyName, extraKeys = []) => {
+    if (!items) return [];
+    return items.filter((it) => {
+      const idStr = String(it._id);
+      if (!showAll && !liveSet.has(idStr)) return false;
+      if (s) {
+        const composite = [
+          it[keyName] || "",
+          ...extraKeys.map((k) => it[k] || ""),
+        ]
+          .join(" ")
+          .toLowerCase();
+        if (!composite.includes(s)) return false;
+      }
+      if (positionFilter) {
+        const posVal = (
+          it.position ||
+          it.preferred_position ||
+          it.code ||
+          ""
+        ).toLowerCase();
+        if (posVal !== positionFilter.toLowerCase()) return false;
+      }
+      return true;
+    });
+  };
+
+  const filteredApplicants = applyFilters(
+    allApplicants || [],
+    selApplicants,
+    "full_name",
+    ["email", "student_id", "position"]
+  );
+  const filteredInterviewers = applyFilters(
+    allInterviewers || [],
+    selInterviewers,
+    "full_name",
+    ["email", "position"]
+  );
+  const filteredRooms = applyFilters(allRooms || [], selRooms, "room_name", [
+    "room_code",
+    "preferred_position",
+  ]);
+  const filteredPositions = applyFilters(
+    allPositions || [],
+    selPositions,
+    "name",
+    ["code", "description"]
+  );
+
+  // Position options aggregated from applicants + interviewers + positions
+  const positionOptions = Array.from(
+    new Set([
+      ...(allApplicants || []).map((a) => a.position).filter(Boolean),
+      ...(allInterviewers || []).map((i) => i.position).filter(Boolean),
+      ...(allPositions || []).map((p) => p.code).filter(Boolean),
+    ])
+  ).sort();
+
+  const toggle = (setFn, current, id) => {
+    const copy = new Set(current);
+    if (copy.has(id)) copy.delete(id);
+    else copy.add(id);
+    setFn(copy);
+  };
+
+  const onSave = async () => {
+    try {
+      const currA = new Set((session.applicant_ids || []).map(String));
+      const currI = new Set((session.interviewer_ids || []).map(String));
+      const currR = new Set((session.room_ids || []).map(String));
+      const currP = new Set((session.position_ids || []).map(String));
+
+      const nextA = Array.from(selApplicants);
+      const nextI = Array.from(selInterviewers);
+      const nextR = Array.from(selRooms);
+      const nextP = Array.from(selPositions);
+
+      const add = {
+        applicants: nextA.filter((x) => !currA.has(x)),
+        interviewers: nextI.filter((x) => !currI.has(x)),
+        rooms: nextR.filter((x) => !currR.has(x)),
+        positions: nextP.filter((x) => !currP.has(x)),
+      };
+      const remove = {
+        applicants: Array.from(currA).filter((x) => !selApplicants.has(x)),
+        interviewers: Array.from(currI).filter((x) => !selInterviewers.has(x)),
+        rooms: Array.from(currR).filter((x) => !selRooms.has(x)),
+        positions: Array.from(currP).filter((x) => !selPositions.has(x)),
+      };
+
+      await sessionsAPI.updateMembership(sessionId, { add, remove });
+      toast.success("Membership updated");
+      // Refresh session and scoped lists immediately
+      queryClient.invalidateQueries(["sessions"]);
+      if (sessionId) {
+        queryClient.invalidateQueries(["applicants", sessionId]);
+        queryClient.invalidateQueries(["interviewers", sessionId]);
+        queryClient.invalidateQueries(["rooms", sessionId]);
+        queryClient.invalidateQueries(["positions"]);
+      }
+      onClose();
+    } catch (e) {
+      toast.error(e.message || "Failed to update membership");
+    }
+  };
+
+  const Tab = ({ id, label }) => (
+    <button
+      onClick={() => setActiveTab(id)}
+      className={`px-3 py-2 text-sm border-b-2 ${
+        activeTab === id
+          ? "border-blue-500 text-blue-600"
+          : "border-transparent text-gray-600"
+      }`}
+    >
+      {label}
+    </button>
+  );
+
+  const List = ({ items, selSet, setSel, titleKey, subKey }) => (
+    <div className="max-h-80 overflow-y-auto border rounded p-2">
+      {items.map((it) => (
+        <label key={it._id} className="flex items-center space-x-2 py-1">
+          <input
+            type="checkbox"
+            checked={selSet.has(String(it._id))}
+            onChange={() => toggle(setSel, selSet, String(it._id))}
+          />
+          <span className="text-sm">
+            {it[titleKey] || it.full_name || it.room_name || it.name}
+            {subKey && it[subKey] ? (
+              <span className="text-gray-500"> — {it[subKey]}</span>
+            ) : null}
+          </span>
+        </label>
+      ))}
+    </div>
+  );
+
+  // Select All checkbox component acts on currently filtered list
+  const SelectAllCheckbox = ({ items, selSet, setSel }) => {
+    const ids = items.map((it) => String(it._id));
+    const total = ids.length;
+    const selected = ids.filter((id) => selSet.has(id)).length;
+    const allSelected = total > 0 && selected === total;
+    const partial = selected > 0 && selected < total;
+
+    const toggleAll = () => {
+      const next = new Set(selSet);
+      if (allSelected) {
+        ids.forEach((id) => next.delete(id));
+      } else {
+        ids.forEach((id) => next.add(id));
+      }
+      setSel(next);
+    };
+
+    return (
+      <label className="flex items-center gap-1 text-xs font-medium cursor-pointer">
+        <input
+          type="checkbox"
+          checked={allSelected}
+          ref={(el) => {
+            if (el) el.indeterminate = partial;
+          }}
+          onChange={toggleAll}
+        />
+        <span>
+          {allSelected ? "Unselect All" : "Select All"} ({selected}/{total})
+        </span>
+      </label>
+    );
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg w-full max-w-4xl p-6">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-lg font-semibold">
+            Manage Membership for {session?.name}
+          </h3>
+          <button className="text-gray-500" onClick={onClose}>
+            ×
+          </button>
+        </div>
+        <div className="border-b mb-4 flex space-x-4">
+          <Tab id="applicants" label="Applicants" />
+          <Tab id="interviewers" label="Interviewers" />
+          <Tab id="rooms" label="Rooms" />
+          <Tab id="positions" label="Positions" />
+        </div>
+
+        {/* Controls */}
+        <div className="flex flex-wrap items-end gap-4 mb-4">
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-medium">Scope:</label>
+            <select
+              className="border px-2 py-1 rounded text-xs"
+              value={showAll ? "all" : "session"}
+              onChange={(e) => setShowAll(e.target.value === "all")}
+            >
+              <option value="all">All</option>
+              <option value="session">In Session</option>
+            </select>
+          </div>
+          <div className="flex-grow min-w-[180px]">
+            <input
+              type="text"
+              placeholder="Search..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full border px-3 py-1 rounded text-sm"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-medium">Position:</label>
+            <select
+              className="border px-2 py-1 rounded text-xs"
+              value={positionFilter}
+              onChange={(e) => setPositionFilter(e.target.value)}
+            >
+              <option value="">(Any)</option>
+              {positionOptions.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+          </div>
+          {(search || positionFilter || !showAll) && (
+            <button
+              onClick={() => {
+                setSearch("");
+                setPositionFilter("");
+                setShowAll(true);
+              }}
+              className="text-xs text-gray-600 hover:text-gray-800"
+            >
+              Reset Filters
+            </button>
+          )}
+          <div className="flex items-center gap-3 ml-auto">
+            {activeTab === "applicants" && (
+              <SelectAllCheckbox
+                items={filteredApplicants}
+                selSet={selApplicants}
+                setSel={setSelApplicants}
+              />
+            )}
+            {activeTab === "interviewers" && (
+              <SelectAllCheckbox
+                items={filteredInterviewers}
+                selSet={selInterviewers}
+                setSel={setSelInterviewers}
+              />
+            )}
+            {activeTab === "rooms" && (
+              <SelectAllCheckbox
+                items={filteredRooms}
+                selSet={selRooms}
+                setSel={setSelRooms}
+              />
+            )}
+            {activeTab === "positions" && (
+              <SelectAllCheckbox
+                items={filteredPositions}
+                selSet={selPositions}
+                setSel={setSelPositions}
+              />
+            )}
+          </div>
+        </div>
+
+        {activeTab === "applicants" && (
+          <List
+            items={filteredApplicants}
+            selSet={selApplicants}
+            setSel={setSelApplicants}
+            titleKey="full_name"
+            subKey="email"
+          />
+        )}
+        {activeTab === "interviewers" && (
+          <List
+            items={filteredInterviewers}
+            selSet={selInterviewers}
+            setSel={setSelInterviewers}
+            titleKey="full_name"
+            subKey="email"
+          />
+        )}
+        {activeTab === "rooms" && (
+          <List
+            items={filteredRooms}
+            selSet={selRooms}
+            setSel={setSelRooms}
+            titleKey="room_name"
+            subKey="room_code"
+          />
+        )}
+        {activeTab === "positions" && (
+          <List
+            items={filteredPositions}
+            selSet={selPositions}
+            setSel={setSelPositions}
+            titleKey="name"
+            subKey="code"
+          />
+        )}
+
+        <div className="mt-4 flex justify-end space-x-3">
+          <button className="btn btn-secondary" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn btn-primary" onClick={onSave}>
+            Save
+          </button>
+        </div>
+      </div>
     </div>
   );
 };

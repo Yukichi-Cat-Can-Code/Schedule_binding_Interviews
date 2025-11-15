@@ -4,6 +4,19 @@ MongoDB Models for Interview Scheduler
 from .mongo_helper import MongoModel
 
 
+class Company(MongoModel):
+    """Companies collection - Multi-tenant isolation"""
+    collection_name = "companies"
+
+    @staticmethod
+    def validate(data: dict) -> tuple[bool, str]:
+        required_fields = ['name', 'code']
+        for f in required_fields:
+            if f not in data or not data[f]:
+                return False, f"Missing required field: {f}"
+        return True, ""
+
+
 class Position(MongoModel):
     """Positions collection - Dynamic positions management"""
     collection_name = "positions"
@@ -11,7 +24,7 @@ class Position(MongoModel):
     @staticmethod
     def validate(data: dict) -> tuple[bool, str]:
         """Validate position data"""
-        required_fields = ['name', 'code']
+        required_fields = ['name', 'code', 'company_id']
         for field in required_fields:
             if field not in data or not data[field]:
                 return False, f"Missing required field: {field}"
@@ -39,6 +52,7 @@ class InterviewSession(MongoModel):
     - start_date: str (ISO format)
     - end_date: str (ISO format)
     - is_active: bool
+    - company_id: str (tenant)
     - applicant_ids: List[str] - IDs of applicants in this session
     - interviewer_ids: List[str] - IDs of interviewers in this session
     - room_ids: List[str] - IDs of rooms available in this session
@@ -49,16 +63,23 @@ class InterviewSession(MongoModel):
     @staticmethod
     def validate(data: dict) -> tuple[bool, str]:
         """Validate interview session data"""
-        required_fields = ['name', 'year', 'start_date', 'end_date']
+        required_fields = ['name', 'year', 'start_date', 'end_date', 'company_id']
         for field in required_fields:
             if field not in data or not data[field]:
                 return False, f"Missing required field: {field}"
         return True, ""
     
     @classmethod
-    def get_active_session(cls):
-        """Get currently active interview session"""
-        sessions = cls.find_all({'is_active': True}, limit=1, sort=[("created_at", -1)])
+    def get_active_session(cls, company_id: str | None = None):
+        """Get currently active interview session.
+
+        If company_id is provided, scope to that company; otherwise
+        fall back to global active sessions (for backward compatibility).
+        """
+        filt = {'is_active': True}
+        if company_id:
+            filt['company_id'] = company_id
+        sessions = cls.find_all(filt, limit=1, sort=[("created_at", -1)])
         return sessions[0] if sessions else None
     
     @classmethod
@@ -113,7 +134,7 @@ class Applicant(MongoModel):
     @staticmethod
     def validate(data: dict) -> tuple[bool, str]:
         """Validate applicant data"""
-        required_fields = ['email', 'full_name', 'student_id', 'position']
+        required_fields = ['email', 'full_name', 'student_id', 'position', 'company_id']
         for field in required_fields:
             if field not in data or not data[field]:
                 return False, f"Missing required field: {field}"
@@ -133,7 +154,7 @@ class Interviewer(MongoModel):
     @staticmethod
     def validate(data: dict) -> tuple[bool, str]:
         """Validate interviewer data"""
-        required_fields = ['full_name', 'email', 'position']
+        required_fields = ['full_name', 'email', 'position', 'company_id']
         for field in required_fields:
             if field not in data or not data[field]:
                 return False, f"Missing required field: {field}"
@@ -153,7 +174,7 @@ class Room(MongoModel):
     @staticmethod
     def validate(data: dict) -> tuple[bool, str]:
         """Validate room data"""
-        required_fields = ['room_code', 'room_name', 'start_time', 'end_time']
+        required_fields = ['room_code', 'room_name', 'start_time', 'end_time', 'company_id']
         for field in required_fields:
             if field not in data or not data[field]:
                 return False, f"Missing required field: {field}"
@@ -168,7 +189,7 @@ class Schedule(MongoModel):
     @staticmethod
     def validate(data: dict) -> tuple[bool, str]:
         """Validate schedule data"""
-        required_fields = ['applicant_id', 'interviewer_id', 'room_id', 'interview_date', 'start_time', 'end_time']
+        required_fields = ['applicant_id', 'interviewer_id', 'room_id', 'interview_date', 'start_time', 'end_time', 'company_id']
         for field in required_fields:
             if field not in data or not data[field]:
                 return False, f"Missing required field: {field}"
@@ -183,3 +204,29 @@ class AlgorithmConfig(MongoModel):
 class ScheduleResult(MongoModel):
     """Algorithm results collection"""
     collection_name = "schedule_results"
+
+
+class ActionLog(MongoModel):
+    """Action logs collection
+
+    Stores who did what, on which resource, and when.
+
+    Expected fields (not strictly enforced):
+    - user_id: str | None
+    - user_email: str | None
+    - company_id: str | None
+    - role: str | None (e.g. "admin", "manager")
+    - action_type: str (e.g. "IMPORT_EXCEL", "RUN_ALGORITHM", "EXPORT_SCHEDULE")
+    - resource_type: str | None (e.g. "session", "applicant", "schedule")
+    - resource_id: str | None
+    - details: dict | None (any extra context)
+    - created_at: datetime (auto from MongoModel)
+    """
+    collection_name = "action_logs"
+
+    @staticmethod
+    def validate(data: dict) -> tuple[bool, str]:
+        if 'action_type' not in data or not data['action_type']:
+            return False, "Missing required field: action_type"
+        return True, ""
+

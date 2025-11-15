@@ -133,6 +133,13 @@ REST_FRAMEWORK = {
 # CORS Settings
 CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:3000').split(',')
 CORS_ALLOW_CREDENTIALS = True
+# Expose filename header for downloads (so frontend can read it)
+CORS_EXPOSE_HEADERS = [
+    'Content-Disposition',
+]
+
+# CSRF - trust local dev frontend
+CSRF_TRUSTED_ORIGINS = os.getenv('CSRF_TRUSTED_ORIGINS', 'http://localhost:3000').split(',')
 
 # Spectacular Settings (API Documentation)
 SPECTACULAR_SETTINGS = {
