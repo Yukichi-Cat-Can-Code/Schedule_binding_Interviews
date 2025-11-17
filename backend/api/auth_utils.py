@@ -52,7 +52,10 @@ class User(MongoModel):
 
 
 def derive_company_id(request) -> str | None:
-    """Extract company_id from user token if present."""
+    """Extract company_id from user token if present.
+    
+    Returns None if user is not authenticated.
+    """
     token = request.headers.get('Authorization')
     if token and token.startswith('Token '):
         token = token[6:].strip()
@@ -62,6 +65,20 @@ def derive_company_id(request) -> str | None:
     if user:
         return user.get('company_id')
     return None
+
+
+def is_authenticated(request) -> bool:
+    """Check if the request has a valid authentication token.
+    
+    Returns True if user is authenticated, False otherwise.
+    """
+    token = request.headers.get('Authorization')
+    if token and token.startswith('Token '):
+        token = token[6:].strip()
+    if not token:
+        return False
+    user = User.find_one({'token': token})
+    return user is not None
 
 
 def get_request_user(request):

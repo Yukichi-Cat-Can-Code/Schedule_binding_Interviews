@@ -21,7 +21,7 @@ from scheduler.genetic_algorithm_variant import GeneticAlgorithmVariant
 from scheduler.genetic_algorithm_variant2 import GeneticAlgorithmVariant2
 from scheduler.genetic_algorithm_variant3 import GeneticAlgorithmVariant3
 import random  # Needed for top-k selection and variant cycling
-from api.auth_utils import User, derive_company_id, get_request_user
+from api.auth_utils import User, derive_company_id, get_request_user, is_authenticated
 
 # Utilities
 def to_json_safe(value):
@@ -176,34 +176,44 @@ def _filter_by_session_constraints(schedule_data, current_session):
 @api_view(['GET'])
 def current_company(request):
     """Return the company document for the authenticated user.
-
-    Uses derive_company_id(request) so we never rely on a client-provided
-    company_id. This keeps company access tied to the auth token and avoids
-    stale IDs after data reset.
+    
+    If not authenticated, returns 401 error directing user to login.
+    Uses derive_company_id(request) to get company from auth token.
     """
     try:
+        # Check if user is authenticated
         company_id = derive_company_id(request)
-
-        # If user has no company_id or it points to a deleted company,
-        # transparently attach them to the first available company.
-        doc = None
-        if company_id:
-            doc = Company.find_one({'_id': ObjectId(str(company_id))})
-
+        
+        if not company_id:
+            # User is not authenticated - require login
+            return Response({
+                'error': 'Authentication required',
+                'detail': 'Please login to access company information',
+                'auth_required': True
+            }, status=status.HTTP_401_UNAUTHORIZED)
+        
+        # Find the company for the authenticated user
+        doc = Company.find_one({'_id': ObjectId(str(company_id))})
+        
         if not doc:
-            # Fallback: pick any existing company (first one)
+            # Company not found for this user - might have been deleted
+            # Try to find any available company and attach the user to it
             companies = Company.find_all({}, limit=1)
             if not companies:
-                return Response({'detail': 'No companies available'}, status=status.HTTP_404_NOT_FOUND)
+                return Response({
+                    'error': 'No companies available',
+                    'detail': 'Please contact administrator to set up a company'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
             doc = companies[0]
-            # Also update the user document so future derive_company_id uses this
+            # Update the user's company association
             try:
                 user = get_request_user(request)
                 if user and user.get('_id'):
                     User.update({'_id': user['_id']}, {'company_id': doc['_id']})
             except Exception:
                 pass
-
+        
         doc = to_json_safe(doc)
         if '_id' in doc:
             doc['id'] = doc['_id']
@@ -1940,6 +1950,13 @@ class ApplicantAPIView(APIView):
         return Response(items)
 
     def post(self, request):
+        # Require authentication for creating applicants
+        if not is_authenticated(request):
+            return Response({
+                'error': 'Authentication required',
+                'detail': 'Please login to create applicants'
+            }, status=status.HTTP_401_UNAUTHORIZED)
+        
         data = request.data
         if 'company_id' not in data:
             cid = derive_company_id(request)
@@ -1953,6 +1970,13 @@ class ApplicantAPIView(APIView):
         return Response(item, status=status.HTTP_201_CREATED)
 
     def put(self, request, pk):
+        # Require authentication for updating applicants
+        if not is_authenticated(request):
+            return Response({
+                'error': 'Authentication required',
+                'detail': 'Please login to update applicants'
+            }, status=status.HTTP_401_UNAUTHORIZED)
+        
         data = request.data
         if 'company_id' not in data:
             cid = derive_company_id(request)
@@ -1963,6 +1987,13 @@ class ApplicantAPIView(APIView):
         return Response({'error': 'Applicant not found'}, status=status.HTTP_404_NOT_FOUND)
 
     def delete(self, request, pk):
+        # Require authentication for deleting applicants
+        if not is_authenticated(request):
+            return Response({
+                'error': 'Authentication required',
+                'detail': 'Please login to delete applicants'
+            }, status=status.HTTP_401_UNAUTHORIZED)
+        
         if Applicant.delete(pk):
             return Response(status=status.HTTP_204_NO_CONTENT)
         return Response({'error': 'Applicant not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -1989,6 +2020,13 @@ class InterviewerAPIView(APIView):
         return Response(items)
 
     def post(self, request):
+        # Require authentication for creating interviewers
+        if not is_authenticated(request):
+            return Response({
+                'error': 'Authentication required',
+                'detail': 'Please login to create interviewers'
+            }, status=status.HTTP_401_UNAUTHORIZED)
+        
         data = request.data
         if 'company_id' not in data:
             cid = derive_company_id(request)
@@ -2002,6 +2040,13 @@ class InterviewerAPIView(APIView):
         return Response(item, status=status.HTTP_201_CREATED)
 
     def put(self, request, pk):
+        # Require authentication for updating interviewers
+        if not is_authenticated(request):
+            return Response({
+                'error': 'Authentication required',
+                'detail': 'Please login to update interviewers'
+            }, status=status.HTTP_401_UNAUTHORIZED)
+        
         data = request.data
         if 'company_id' not in data:
             cid = derive_company_id(request)
@@ -2012,6 +2057,13 @@ class InterviewerAPIView(APIView):
         return Response({'error': 'Interviewer not found'}, status=status.HTTP_404_NOT_FOUND)
 
     def delete(self, request, pk):
+        # Require authentication for deleting interviewers
+        if not is_authenticated(request):
+            return Response({
+                'error': 'Authentication required',
+                'detail': 'Please login to delete interviewers'
+            }, status=status.HTTP_401_UNAUTHORIZED)
+        
         if Interviewer.delete(pk):
             return Response(status=status.HTTP_204_NO_CONTENT)
         return Response({'error': 'Interviewer not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -2034,6 +2086,13 @@ class RoomAPIView(APIView):
         return Response(items)
 
     def post(self, request):
+        # Require authentication for creating rooms
+        if not is_authenticated(request):
+            return Response({
+                'error': 'Authentication required',
+                'detail': 'Please login to create rooms'
+            }, status=status.HTTP_401_UNAUTHORIZED)
+        
         data = request.data
         if 'company_id' not in data:
             cid = derive_company_id(request)
@@ -2047,6 +2106,13 @@ class RoomAPIView(APIView):
         return Response(item, status=status.HTTP_201_CREATED)
 
     def put(self, request, pk):
+        # Require authentication for updating rooms
+        if not is_authenticated(request):
+            return Response({
+                'error': 'Authentication required',
+                'detail': 'Please login to update rooms'
+            }, status=status.HTTP_401_UNAUTHORIZED)
+        
         data = request.data
         if 'company_id' not in data:
             cid = derive_company_id(request)
@@ -2057,6 +2123,13 @@ class RoomAPIView(APIView):
         return Response({'error': 'Room not found'}, status=status.HTTP_404_NOT_FOUND)
 
     def delete(self, request, pk):
+        # Require authentication for deleting rooms
+        if not is_authenticated(request):
+            return Response({
+                'error': 'Authentication required',
+                'detail': 'Please login to delete rooms'
+            }, status=status.HTTP_401_UNAUTHORIZED)
+        
         if Room.delete(pk):
             return Response(status=status.HTTP_204_NO_CONTENT)
         return Response({'error': 'Room not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -2077,6 +2150,13 @@ class ScheduleAPIView(APIView):
         return Response(items)
 
     def post(self, request):
+        # Require authentication for creating schedules
+        if not is_authenticated(request):
+            return Response({
+                'error': 'Authentication required',
+                'detail': 'Please login to create schedules'
+            }, status=status.HTTP_401_UNAUTHORIZED)
+        
         data = request.data
         is_valid, err = Schedule.validate(data)
         if not is_valid:
@@ -2086,11 +2166,25 @@ class ScheduleAPIView(APIView):
         return Response(item, status=status.HTTP_201_CREATED)
 
     def put(self, request, pk):
+        # Require authentication for updating schedules
+        if not is_authenticated(request):
+            return Response({
+                'error': 'Authentication required',
+                'detail': 'Please login to update schedules'
+            }, status=status.HTTP_401_UNAUTHORIZED)
+        
         if Schedule.update(pk, request.data):
             return Response(Schedule.find_by_id(pk))
         return Response({'error': 'Schedule not found'}, status=status.HTTP_404_NOT_FOUND)
 
     def delete(self, request, pk):
+        # Require authentication for deleting schedules
+        if not is_authenticated(request):
+            return Response({
+                'error': 'Authentication required',
+                'detail': 'Please login to delete schedules'
+            }, status=status.HTTP_401_UNAUTHORIZED)
+        
         if Schedule.delete(pk):
             return Response(status=status.HTTP_204_NO_CONTENT)
         return Response({'error': 'Schedule not found'}, status=status.HTTP_404_NOT_FOUND)
