@@ -5,6 +5,8 @@ import DataManagement from "./pages/DataManagement";
 import AlgorithmSettings from "./pages/AlgorithmSettings";
 import ScheduleView from "./pages/ScheduleView";
 import Comparison from "./pages/Comparison";
+import Company from "./pages/Company";
+import ActionLogs from "./pages/ActionLogs";
 
 function App() {
   return (
@@ -15,6 +17,8 @@ function App() {
         <Route path="config" element={<AlgorithmSettings />} />
         <Route path="schedule" element={<ScheduleView />} />
         <Route path="compare" element={<Comparison />} />
+        <Route path="company" element={<Company />} />
+        <Route path="logs" element={<ActionLogs />} />
       </Route>
     </Routes>
   );

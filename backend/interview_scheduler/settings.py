@@ -77,7 +77,6 @@ DATABASES = {
     }
 }
 
-# MongoDB Connection (using PyMongo directly)
 from pymongo import MongoClient
 
 MONGODB_URI = os.getenv('MONGODB_URI', 'mongodb://localhost:27017/')
@@ -85,7 +84,6 @@ MONGODB_NAME = os.getenv('MONGODB_DB_NAME', 'schedule_interview')
 
 try:
     mongo_client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
-    # Test connection
     mongo_client.server_info()
     mongodb = mongo_client[MONGODB_NAME]
     print(f"✅ Connected to MongoDB: {MONGODB_NAME}")
@@ -135,6 +133,13 @@ REST_FRAMEWORK = {
 # CORS Settings
 CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:3000').split(',')
 CORS_ALLOW_CREDENTIALS = True
+# Expose filename header for downloads (so frontend can read it)
+CORS_EXPOSE_HEADERS = [
+    'Content-Disposition',
+]
+
+# CSRF - trust local dev frontend
+CSRF_TRUSTED_ORIGINS = os.getenv('CSRF_TRUSTED_ORIGINS', 'http://localhost:3000').split(',')
 
 # Spectacular Settings (API Documentation)
 SPECTACULAR_SETTINGS = {
@@ -160,12 +165,6 @@ ALGORITHM_CONFIG = {
         'MUTATION_RATE': float(os.getenv('GA_MUTATION_RATE', 0.15)),
         'TOURNAMENT_SIZE': 3,
         'ELITISM_RATE': 0.1,
-    },
-    'SA': {
-        'INITIAL_TEMP': 1000.0,
-        'FINAL_TEMP': 0.1,
-        'COOLING_RATE': 0.95,
-        'MAX_ITERATIONS': 1000,
     },
     'WEIGHTS': {
         'CONFLICT': float(os.getenv('WEIGHT_CONFLICT', 0.4)),

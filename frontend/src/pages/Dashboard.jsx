@@ -1,18 +1,49 @@
+import React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { dataAPI, schedulesAPI } from "../services/api";
+import { dataAPI, schedulesAPI, sessionsAPI } from "../services/api";
+import { useCurrentCompany } from "../hooks/useCurrentCompany";
 import { FiUsers, FiUserCheck, FiHome, FiCalendar } from "react-icons/fi";
 
 const Dashboard = () => {
   const navigate = useNavigate();
+  const { companyId } = useCurrentCompany();
+  const { data: sessions } = useQuery({
+    queryKey: ["sessions", companyId || "all"],
+    enabled: !!companyId,
+    queryFn: () =>
+      sessionsAPI.getAll({ company_id: companyId }).then((res) => res.data),
+  });
+
+  const [selectedSessionId, setSelectedSessionId] = React.useState("");
+
+  // When there is exactly one session for the company, auto-select it
+  // so the dashboard immediately reflects that active context.
+  React.useEffect(() => {
+    if (sessions && sessions.length === 1 && !selectedSessionId) {
+      setSelectedSessionId(sessions[0]._id);
+    }
+  }, [sessions, selectedSessionId]);
+
   const { data: stats, isLoading } = useQuery({
-    queryKey: ["statistics"],
-    queryFn: () => dataAPI.getStatistics().then((res) => res.data),
+    queryKey: ["statistics", companyId, selectedSessionId],
+    enabled: !!companyId,
+    queryFn: () =>
+      dataAPI
+        .getStatistics({
+          ...(companyId ? { company_id: companyId } : {}),
+          ...(selectedSessionId ? { session_id: selectedSessionId } : {}),
+        })
+        .then((res) => res.data),
   });
 
   const { data: conflicts } = useQuery({
-    queryKey: ["conflicts"],
-    queryFn: () => schedulesAPI.getConflicts().then((res) => res.data),
+    queryKey: ["conflicts", companyId],
+    enabled: !!companyId,
+    queryFn: () =>
+      schedulesAPI
+        .getConflicts({ company_id: companyId })
+        .then((res) => res.data),
   });
 
   const statCards = [
@@ -56,8 +87,25 @@ const Dashboard = () => {
       <div>
         <h2 className="text-3xl font-bold text-gray-900">Dashboard</h2>
         <p className="text-gray-600 mt-1">
-          Overview of your interview scheduling system
+          Overview of your interview scheduling system (per session)
         </p>
+      </div>
+      <div className="mt-2">
+        <label className="text-sm font-medium text-gray-700 mr-2">
+          Session:
+        </label>
+        <select
+          className="px-2 py-1 border rounded-md text-sm"
+          value={selectedSessionId}
+          onChange={(e) => setSelectedSessionId(e.target.value)}
+        >
+          <option value="">All sessions</option>
+          {(sessions || []).map((s) => (
+            <option key={s._id} value={s._id}>
+              {s.name || s.code || s._id}
+            </option>
+          ))}
+        </select>
       </div>
 
       {/* Stats Cards */}
@@ -157,21 +205,21 @@ const Dashboard = () => {
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <button
-            onClick={() => navigate("/data-management")}
+            onClick={() => navigate("/data")}
             className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors cursor-pointer"
           >
             <p className="font-medium text-gray-900">Import Data</p>
             <p className="text-sm text-gray-600 mt-1">Upload Excel file</p>
           </button>
           <button
-            onClick={() => navigate("/algorithm-settings")}
+            onClick={() => navigate("/config")}
             className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-green-500 hover:bg-green-50 transition-colors cursor-pointer"
           >
             <p className="font-medium text-gray-900">Run Algorithm</p>
             <p className="text-sm text-gray-600 mt-1">Generate schedule</p>
           </button>
           <button
-            onClick={() => navigate("/comparison")}
+            onClick={() => navigate("/compare")}
             className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-purple-500 hover:bg-purple-50 transition-colors cursor-pointer"
           >
             <p className="font-medium text-gray-900">Compare Results</p>
