@@ -1,6 +1,4 @@
-"""
-DRF Serializers for API
-"""
+
 from rest_framework import serializers
 from api.models import (
     Applicant, Interviewer, Room, Schedule, 
@@ -55,7 +53,6 @@ class ScheduleResultSerializer(serializers.ModelSerializer):
 
 
 class ExcelImportSerializer(serializers.Serializer):
-    """Serializer for Excel import"""
     file = serializers.FileField()
     sheet_type = serializers.ChoiceField(
         choices=['applicants', 'interviewers', 'rooms', 'all']
@@ -63,7 +60,6 @@ class ExcelImportSerializer(serializers.Serializer):
 
 
 class RunAlgorithmSerializer(serializers.Serializer):
-    """Serializer for running scheduling algorithm"""
     algorithm = serializers.ChoiceField(
         choices=['GA', 'GREEDY', 'SA', 'ALL'],
         default='GA'
@@ -72,7 +68,6 @@ class RunAlgorithmSerializer(serializers.Serializer):
 
 
 class CompareAlgorithmsSerializer(serializers.Serializer):
-    """Serializer for comparing multiple algorithms"""
     algorithms = serializers.ListField(
         child=serializers.ChoiceField(choices=['GA', 'GREEDY', 'SA']),
         default=['GA', 'GREEDY', 'SA']

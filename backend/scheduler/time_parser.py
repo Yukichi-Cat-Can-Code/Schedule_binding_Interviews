@@ -217,7 +217,7 @@ class TimeParser:
         return None
     
     @classmethod
-    def get_time_slots(cls, applicant: Dict, slot_duration: int = 30) -> List[Tuple[datetime, datetime]]:
+    def get_time_slots(cls, applicant: Dict, slot_duration: int = 30, base_date: datetime = None) -> List[Tuple[datetime, datetime]]:
         """
         Get all possible time slots for an applicant
         
@@ -233,7 +233,10 @@ class TimeParser:
         all_time_slots = []
         
         for slot in available_slots:
-            start_dt, end_dt = slot.to_datetime()
+            # Allow deterministic tests to pass a `base_date` which will be used when
+            # computing the next occurrence of the weekday. If base_date is None,
+            # `to_datetime` will use current time behavior (next occurrence).
+            start_dt, end_dt = slot.to_datetime(base_date)
             
             # Generate all possible slots within this time range
             current = start_dt

@@ -1,0 +1,1 @@
+Aggregated convergence across 60 runs. Start soft penalties mean = 22.80 (±2.20), End mean = 24.60 (±1.34).

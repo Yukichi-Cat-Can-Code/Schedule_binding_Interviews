@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main, Schedule_V1.1.0]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: [3.11, 3.12]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+      - name: Run backend tests
+        working-directory: ./
+        env:
+          PYTHONPATH: backend
+        run: |
+          pytest backend/tests -q
+  benchmark:
+    name: Benchmark TimeSlotCache (manual)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.11
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+      - name: Run benchmark
+        env:
+          PYTHONPATH: backend
+        run: |
+          mkdir -p bench_output
+          python backend/benchmarks/benchmark_timeslot_cache.py > bench_output/benchmark_timeslot_cache.txt
+      - name: Upload benchmark artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: timeslot-benchmark
+          path: bench_output/benchmark_timeslot_cache.txt

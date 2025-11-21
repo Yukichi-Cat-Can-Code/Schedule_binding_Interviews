@@ -11,11 +11,15 @@ const Dashboard = () => {
   const { data: sessions } = useQuery({
     queryKey: ["sessions", companyId || "all"],
     enabled: !!companyId,
-    queryFn: () =>
-      sessionsAPI.getAll({ company_id: companyId }).then((res) => res.data),
+    queryFn: () => sessionsAPI.getAll().then((res) => res.data),
   });
 
-  const [selectedSessionId, setSelectedSessionId] = React.useState("");
+  // Persist selected session across refreshes but ensure it's valid for current company
+  const [selectedSessionId, setSelectedSessionId] = React.useState(() =>
+    typeof window !== "undefined"
+      ? localStorage.getItem("selected_session") || ""
+      : ""
+  );
 
   // When there is exactly one session for the company, auto-select it
   // so the dashboard immediately reflects that active context.
@@ -25,13 +29,28 @@ const Dashboard = () => {
     }
   }, [sessions, selectedSessionId]);
 
+  // If the selected session is not part of the currently-loaded sessions (e.g. was
+  // left over from a different company), clear it so statistics are not filtered
+  // by an unrelated session id.
+  React.useEffect(() => {
+    if (!sessions) return;
+    if (selectedSessionId) {
+      const found = sessions.find((s) => s._id === selectedSessionId);
+      if (!found) {
+        setSelectedSessionId("");
+        try {
+          localStorage.removeItem("selected_session");
+        } catch (e) {}
+      }
+    }
+  }, [sessions, selectedSessionId]);
+
   const { data: stats, isLoading } = useQuery({
     queryKey: ["statistics", companyId, selectedSessionId],
     enabled: !!companyId,
     queryFn: () =>
       dataAPI
         .getStatistics({
-          ...(companyId ? { company_id: companyId } : {}),
           ...(selectedSessionId ? { session_id: selectedSessionId } : {}),
         })
         .then((res) => res.data),
@@ -40,10 +59,7 @@ const Dashboard = () => {
   const { data: conflicts } = useQuery({
     queryKey: ["conflicts", companyId],
     enabled: !!companyId,
-    queryFn: () =>
-      schedulesAPI
-        .getConflicts({ company_id: companyId })
-        .then((res) => res.data),
+    queryFn: () => schedulesAPI.getConflicts().then((res) => res.data),
   });
 
   const statCards = [
@@ -97,7 +113,14 @@ const Dashboard = () => {
         <select
           className="px-2 py-1 border rounded-md text-sm"
           value={selectedSessionId}
-          onChange={(e) => setSelectedSessionId(e.target.value)}
+          onChange={(e) => {
+            const v = e.target.value || "";
+            setSelectedSessionId(v);
+            try {
+              if (v) localStorage.setItem("selected_session", v);
+              else localStorage.removeItem("selected_session");
+            } catch (e) {}
+          }}
         >
           <option value="">All sessions</option>
           {(sessions || []).map((s) => (

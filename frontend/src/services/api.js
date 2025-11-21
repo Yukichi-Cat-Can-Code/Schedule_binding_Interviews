@@ -1,7 +1,6 @@
 import axios from "axios";
 
-const API_BASE_URL =
-  import.meta.env.VITE_API_URL || "http://localhost:8000/api";
+const API_BASE_URL = import.meta.env.VITE_API_URL || "/api";
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -18,6 +17,52 @@ api.interceptors.request.use((config) => {
     // Backend expects 'Token <token>' format
     config.headers["Authorization"] = `Token ${token}`;
   }
+  return config;
+});
+
+api.interceptors.request.use((config) => {
+  try {
+    const cid =
+      typeof window !== "undefined"
+        ? localStorage.getItem("auth_company_id")
+        : null;
+    if (!cid) return config;
+
+    const method = (config.method || "get").toLowerCase();
+    // Ensure params object exists
+    config.params = config.params || {};
+
+    if (method === "get" || method === "delete") {
+      // Put company_id in query string to avoid CORS preflight / custom headers
+      config.params = { ...config.params, company_id: cid };
+    } else {
+      // For POST/PUT/PATCH, if JSON body and company_id not present, add it
+      const contentType =
+        (config.headers &&
+          (config.headers["Content-Type"] || config.headers["content-type"])) ||
+        "";
+      // Only auto-inject into JSON bodies. If `config.data` is FormData,
+      // don't overwrite it — append the company_id field to the FormData
+      // (if not already present) so file uploads are preserved.
+      if (config.data instanceof FormData) {
+        if (!config.data.has("company_id")) {
+          config.data.append("company_id", cid);
+        }
+      } else if (contentType.includes("application/json")) {
+        // Ensure data object for JSON payloads
+        config.data = config.data || {};
+        if (typeof config.data === "object" && !Array.isArray(config.data)) {
+          if (!("company_id" in config.data)) {
+            config.data = { ...config.data, company_id: cid };
+          }
+        }
+      } else {
+        // For other content types (e.g. form-encoded), place company_id in params if not already
+        config.params = config.params || {};
+        if (!config.params.company_id) config.params.company_id = cid;
+      }
+    }
+  } catch (e) {}
   return config;
 });
 
@@ -79,8 +124,18 @@ export const dataAPI = {
     formData.append("file", file);
     formData.append("type", sheetType);
     if (sessionId) formData.append("session_id", sessionId);
+    // Let the browser set the multipart Content-Type (with boundary).
+    // Attach company_id as a query param so backend can resolve tenant without requiring
+    // multipart parsing to contain it. This avoids CORS preflights and parser surprises.
+    const cid =
+      typeof window !== "undefined"
+        ? localStorage.getItem("auth_company_id")
+        : null;
+    // Ensure axios does not force a JSON Content-Type for this FormData request;
+    // the browser will set the correct multipart boundary header automatically.
     return api.post("/data/import/", formData, {
-      headers: { "Content-Type": "multipart/form-data" },
+      params: cid ? { company_id: cid } : {},
+      headers: { "Content-Type": undefined },
     });
   },
   exportExcel: (sessionId) =>
@@ -119,8 +174,6 @@ export const sessionsAPI = {
   activate: (id) => api.post(`/sessions/${id}/activate/`),
   updateMembership: (id, data) => api.post(`/sessions/${id}/membership/`, data),
 };
-
-// (Removed duplicate companiesAPI block; single canonical definition is below)
 
 // Algorithms
 export const algorithmsAPI = {
@@ -179,10 +232,39 @@ export const algorithmsAPI = {
   },
 };
 
+// GA Dev / Debug APIs
+export const algorithmsDevAPI = {
+  getLatestRun: () => api.get("/algorithm/debug/run/latest/"),
+  getScheduleDetail: ({ run_id, generation, individual_id }) =>
+    api.get("/algorithm/debug/schedule/", {
+      params: { run_id, generation, individual_id },
+    }),
+  getCrossoverDetail: ({ run_id, generation, child_id }) =>
+    api.get("/algorithm/debug/crossover/", {
+      params: { run_id, generation, child_id },
+    }),
+  getLineageDetail: ({ run_id, generation, individual_id }) =>
+    api.get("/algorithm/debug/lineage/", {
+      params: { run_id, generation, individual_id },
+    }),
+};
+
 // Companies
 export const companiesAPI = {
   getAll: () => api.get("/companies/"),
-  getCurrent: () => api.get("/companies/current/"),
+
+  getCurrent: async () => {
+    const cid =
+      typeof window !== "undefined"
+        ? localStorage.getItem("auth_company_id")
+        : null;
+    if (cid) {
+      return api.get(`/companies/${encodeURIComponent(cid)}/`);
+    }
+
+    // If no local company id available, fall back to the server-resolved endpoint
+    return api.get("/companies/current/");
+  },
   getById: (id) => api.get(`/companies/${id}/`),
   create: (data) => api.post("/companies/", data),
   update: (id, data) => api.put(`/companies/${id}/`, data),

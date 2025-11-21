@@ -32,8 +32,7 @@ const Comparison = () => {
   const { data: sessions } = useQuery({
     queryKey: ["sessions", companyId],
     enabled: !!companyId,
-    queryFn: () =>
-      sessionsAPI.getAll({ company_id: companyId }).then((res) => res.data),
+    queryFn: () => sessionsAPI.getAll().then((res) => res.data),
   });
 
   const { data: previousResults } = useQuery({
@@ -42,7 +41,6 @@ const Comparison = () => {
     queryFn: () =>
       algorithmsAPI
         .getResults({
-          company_id: companyId,
           session_id: sessionId || undefined,
         })
         .then((res) => res.data),
@@ -57,7 +55,6 @@ const Comparison = () => {
           GA3: {},
           GA4: {},
         },
-        company_id: companyId,
         session_id: sessionId || undefined,
       }),
     onSuccess: (response) => {

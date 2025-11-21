@@ -1,0 +1,11 @@
+[build-system]
+requires = ["setuptools>=61","wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "schedule_binding_interviews"
+version = "0.1.0"
+description = "GA scheduler and benchmarks"
+readme = "README.md"
+authors = [ { name = "Auto" } ]
+keywords = ["scheduler","GA","benchmark"]

@@ -34,15 +34,13 @@ const ScheduleView = () => {
   const { data: sessions } = useQuery({
     queryKey: ["sessions", companyId || "all"],
     enabled: !!companyId,
-    queryFn: () =>
-      sessionsAPI.getAll({ company_id: companyId }).then((res) => res.data),
+    queryFn: () => sessionsAPI.getAll().then((res) => res.data),
   });
 
   const { data: activeSession } = useQuery({
     queryKey: ["sessions", "active", companyId],
     enabled: !!companyId,
-    queryFn: () =>
-      sessionsAPI.getActive({ company_id: companyId }).then((res) => res.data),
+    queryFn: () => sessionsAPI.getActive().then((res) => res.data),
   });
 
   useEffect(() => {
@@ -122,7 +120,9 @@ const ScheduleView = () => {
     queryFn: () =>
       algorithmsAPI
         .getResults({ session_id: selectedSessionId, selected: true, top: 1 })
-        .then((res) => (Array.isArray(res.data) ? res.data[0] : null)),
+        .then((res) =>
+          Array.isArray(res.data) && res.data.length ? res.data[0] : null
+        ),
   });
 
   const chooseResultMutation = useMutation({

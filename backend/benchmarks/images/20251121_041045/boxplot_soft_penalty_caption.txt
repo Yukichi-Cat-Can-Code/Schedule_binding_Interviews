@@ -1,0 +1,1 @@
+Box plot showing distribution of final GA fitness across different SOFT_PENALTY values. Each box summarizes N independent runs (multi-seed sweep). The narrow vertical range emphasizes small variations in final fitness (zoomed to [0.78, 0.82]). Robustness is indicated by nearly identical box shapes across weights, suggesting low sensitivity to SOFT_PENALTY in the tested interval.

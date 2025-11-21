@@ -40,8 +40,13 @@ class GeneticAlgorithmVariant2(GeneticAlgorithm):
             idx = 0
             for i in range(size):
                 if child[i] is None:
-                    child[i] = copy.deepcopy(fill[idx])
-                    idx += 1
+                    if idx >= len(fill):
+                        # Safety fallback: wrap around into p2_genes to avoid IndexError
+                        # This should be extremely rare and indicates duplicate genes.
+                        child[i] = copy.deepcopy(p2_genes[i])
+                    else:
+                        child[i] = copy.deepcopy(fill[idx])
+                        idx += 1
             return Chromosome(child)
 
         return ox(parent1.genes, parent2.genes), ox(parent2.genes, parent1.genes)

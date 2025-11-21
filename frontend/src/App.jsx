@@ -7,6 +7,7 @@ import ScheduleView from "./pages/ScheduleView";
 import Comparison from "./pages/Comparison";
 import Company from "./pages/Company";
 import ActionLogs from "./pages/ActionLogs";
+import DevMode from "./pages/DevMode";
 
 function App() {
   return (
@@ -19,6 +20,7 @@ function App() {
         <Route path="compare" element={<Comparison />} />
         <Route path="company" element={<Company />} />
         <Route path="logs" element={<ActionLogs />} />
+        <Route path="dev" element={<DevMode />} />
       </Route>
     </Routes>
   );

@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { dataAPI } from "../services/api";
+import { dataAPI, companiesAPI } from "../services/api";
 
 const ACTION_OPTIONS = [
   { value: "", label: "All actions" },
@@ -22,6 +22,108 @@ function ActionLogs() {
     queryFn: () =>
       dataAPI.getLogs({ actionType, limit: 200 }).then((res) => res.data),
   });
+
+  const [companyMap, setCompanyMap] = useState({});
+
+  useEffect(() => {
+    if (!logs || !Array.isArray(logs)) return;
+    const ids = Array.from(
+      new Set(logs.map((l) => l.company_id).filter(Boolean))
+    );
+    if (ids.length === 0) return;
+
+    let mounted = true;
+    (async () => {
+      const pairs = await Promise.all(
+        ids.map(async (id) => {
+          try {
+            const res = await companiesAPI.getById(id);
+            const name = res?.data?.name || res?.data?.company_name || null;
+            return [id, name];
+          } catch (e) {
+            return [id, null];
+          }
+        })
+      );
+      if (!mounted) return;
+      const map = {};
+      for (const [id, name] of pairs) {
+        if (name) map[id] = name;
+      }
+      setCompanyMap((s) => ({ ...s, ...map }));
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, [logs]);
+
+  const sanitizeDetails = (obj) => {
+    if (obj === null || obj === undefined) return obj;
+    if (typeof obj !== "object") return obj;
+
+    if (Array.isArray(obj)) {
+      // For arrays, sanitize each element; for arrays of ids show counts
+      const isIdArray = obj.every(
+        (v) => typeof v === "string" && /^[0-9a-fA-F]{8,}$/.test(v)
+      );
+      if (isIdArray) return `(${obj.length} items)`;
+      return obj.map((v) => sanitizeDetails(v));
+    }
+
+    const out = {};
+    for (const [k, v] of Object.entries(obj)) {
+      // Skip keys that are likely identifiers
+      if (/(_id|company_id|user_id|session_id|resource_id)$/.test(k)) continue;
+
+      // collapse long id-like string values
+      if (typeof v === "string" && /^[0-9a-fA-F]{8,}$/.test(v)) continue;
+
+      // make some keys more friendly
+      if (k === "data_keys" && Array.isArray(v)) {
+        out["Data keys"] = v.join(", ");
+        continue;
+      }
+      if (k === "execution_time" && typeof v === "number") {
+        out["Execution time (s)"] = v.toFixed ? v.toFixed(2) : v;
+        continue;
+      }
+      if (k === "generations") {
+        out["Generations"] = v;
+        continue;
+      }
+
+      out[k] = sanitizeDetails(v);
+    }
+    return out;
+  };
+
+  const getUserDisplay = (log) => {
+    if (!log) return "-";
+    if (log.user_email) return log.user_email;
+    if (log.user_name) return log.user_name;
+    // try details common fields
+    const d = log.details || {};
+    if (d.user_email) return d.user_email;
+    if (d.user && typeof d.user === "object") {
+      return d.user.email || d.user.username || d.user.name || null;
+    }
+    if (d.user_email) return d.user_email;
+    if (log.user_id) return String(log.user_id).slice(0, 8) + "...";
+    return "-";
+  };
+
+  const getRoleDisplay = (log) => {
+    if (!log) return "-";
+    if (log.role) return log.role;
+    const d = log.details || {};
+    if (d.role) return d.role;
+    if (d.user_role) return d.user_role;
+    if (d.role_name) return d.role_name;
+    // if user object includes role
+    if (d.user && typeof d.user === "object" && d.user.role) return d.user.role;
+    return "-";
+  };
 
   return (
     <div className="space-y-6">
@@ -128,13 +230,13 @@ function ActionLogs() {
                         : "-"}
                     </td>
                     <td className="px-4 py-2 whitespace-nowrap">
-                      {log.user_email || log.user_id || "-"}
+                      {getUserDisplay(log)}
                     </td>
                     <td className="px-4 py-2 whitespace-nowrap">
-                      {log.company_id || "-"}
+                      {log.company_id ? companyMap[log.company_id] || "-" : "-"}
                     </td>
                     <td className="px-4 py-2 whitespace-nowrap">
-                      {log.role || "-"}
+                      {getRoleDisplay(log)}
                     </td>
                     <td className="px-4 py-2 whitespace-nowrap font-medium">
                       {log.action_type}
@@ -145,11 +247,19 @@ function ActionLogs() {
                         : "-"}
                     </td>
                     <td className="px-4 py-2 align-top max-w-xs">
-                      <pre className="text-xs text-gray-600 whitespace-pre-wrap break-words">
-                        {log.details
-                          ? JSON.stringify(log.details, null, 2)
-                          : "-"}
-                      </pre>
+                      {log.details ? (
+                        <>
+                          <pre className="text-xs text-gray-600 whitespace-pre-wrap break-words">
+                            {JSON.stringify(
+                              sanitizeDetails(log.details),
+                              null,
+                              2
+                            )}
+                          </pre>
+                        </>
+                      ) : (
+                        "-"
+                      )}
                     </td>
                   </tr>
                 ))}

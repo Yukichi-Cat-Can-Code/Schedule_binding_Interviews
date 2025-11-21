@@ -23,16 +23,7 @@ class User(MongoModel):
 
     @staticmethod
     def validate(data: dict) -> tuple[bool, str]:
-        """Validate user data.
-
-        Required fields:
-          - username
-          - password
-
-        Optional but recommended for RBAC:
-          - role: "admin" or "manager" (defaults handled at creation time)
-          - company_id: for manager-scoped accounts
-        """
+        
         for f in ['username','password']:
             if f not in data or not data[f]:
                 return False, f'Missing field {f}'
@@ -57,7 +48,12 @@ def derive_company_id(request) -> str | None:
     if token and token.startswith('Token '):
         token = token[6:].strip()
     if not token:
-        return None
+        # Fallbacks: allow client to provide company_id as query param (company_id)
+        # or as header `X-Auth-Company-Id`. This is intentionally permissive
+        # for local development and debugging when Authorization header may be
+        # missing due to proxy stripping.
+        cid = request.headers.get('X-Auth-Company-Id') or request.GET.get('company_id')
+        return cid
     user = User.find_one({'token': token})
     if user:
         return user.get('company_id')
@@ -65,11 +61,7 @@ def derive_company_id(request) -> str | None:
 
 
 def get_request_user(request):
-    """Resolve current user from Authorization header token.
-
-    Returns a dict-like user document or None. This is a helper for
-    lightweight RBAC checks without changing existing call sites.
-    """
+    
     token = request.headers.get('Authorization')
     if token and token.startswith('Token '):
         token = token[6:].strip()

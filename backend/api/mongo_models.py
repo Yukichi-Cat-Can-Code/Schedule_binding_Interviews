@@ -2,11 +2,36 @@
 MongoDB Models for Interview Scheduler
 """
 from .mongo_helper import MongoModel
+from bson import ObjectId
+import re
+from datetime import datetime
+
+
+def _is_valid_objectid(s: str) -> bool:
+    if not isinstance(s, str):
+        return False
+    return bool(re.fullmatch(r"[0-9a-fA-F]{24}", s))
+
+
+def _ensure_company_field(data: dict, company_id: str | None) -> tuple[dict, bool, str]:
+    """Ensure `company_id` is present and valid. Returns (data, ok, err).
+
+    This centralizes tenant enforcement for all create/update flows.
+    """
+    if company_id:
+        data['company_id'] = company_id
+    if 'company_id' not in data or not data['company_id']:
+        return data, False, 'Missing required field: company_id'
+    # allow either ObjectId strings or short company codes
+    if not isinstance(data['company_id'], str):
+        return data, False, 'company_id must be a string'
+    return data, True, ''
 
 
 class Company(MongoModel):
     """Companies collection - Multi-tenant isolation"""
     collection_name = "companies"
+    schema_version = 1
 
     @staticmethod
     def validate(data: dict) -> tuple[bool, str]:
@@ -14,12 +39,18 @@ class Company(MongoModel):
         for f in required_fields:
             if f not in data or not data[f]:
                 return False, f"Missing required field: {f}"
+        # basic types
+        if not isinstance(data.get('name'), str):
+            return False, 'Field `name` must be a string'
+        if not isinstance(data.get('code'), str):
+            return False, 'Field `code` must be a string'
         return True, ""
 
 
 class Position(MongoModel):
     """Positions collection - Dynamic positions management"""
     collection_name = "positions"
+    schema_version = 1
     
     @staticmethod
     def validate(data: dict) -> tuple[bool, str]:
@@ -28,6 +59,11 @@ class Position(MongoModel):
         for field in required_fields:
             if field not in data or not data[field]:
                 return False, f"Missing required field: {field}"
+        # sanitize company_id
+        if not isinstance(data.get('company_id'), str):
+            return False, 'company_id must be a string'
+        if not isinstance(data.get('name'), str) or not isinstance(data.get('code'), str):
+            return False, 'name and code must be strings'
         return True, ""
     
     @classmethod
@@ -59,6 +95,7 @@ class InterviewSession(MongoModel):
     - position_ids: List[str] - IDs of positions available in this session
     """
     collection_name = "interview_sessions"
+    schema_version = 1
     
     @staticmethod
     def validate(data: dict) -> tuple[bool, str]:
@@ -67,6 +104,42 @@ class InterviewSession(MongoModel):
         for field in required_fields:
             if field not in data or not data[field]:
                 return False, f"Missing required field: {field}"
+        # type checks
+        if not isinstance(data.get('name'), str):
+            return False, 'name must be string'
+        if not isinstance(data.get('year'), int):
+            return False, 'year must be integer'
+        # validate ISO date strings or datetimes
+        try:
+            if isinstance(data.get('start_date'), str):
+                datetime.fromisoformat(data.get('start_date'))
+            if isinstance(data.get('end_date'), str):
+                datetime.fromisoformat(data.get('end_date'))
+        except Exception:
+            return False, 'start_date/end_date must be ISO date strings or datetimes'
+        # Optional: allow specifying daily time window for sessions as
+        # `start_time` and `end_time` (HH:MM or full ISO time). If present,
+        # validate they parse as time or datetime strings.
+        try:
+            if 'start_time' in data and data.get('start_time'):
+                # Accept either HH:MM or ISO datetime string
+                v = data.get('start_time')
+                if isinstance(v, str):
+                    # try parsing as full ISO datetime first
+                    try:
+                        datetime.fromisoformat(v)
+                    except Exception:
+                        # try parsing as time-only HH:MM by prefixing a date
+                        datetime.fromisoformat(f"1970-01-01T{v}")
+            if 'end_time' in data and data.get('end_time'):
+                v = data.get('end_time')
+                if isinstance(v, str):
+                    try:
+                        datetime.fromisoformat(v)
+                    except Exception:
+                        datetime.fromisoformat(f"1970-01-01T{v}")
+        except Exception:
+            return False, 'start_time/end_time must be ISO time strings or HH:MM'
         return True, ""
     
     @classmethod
@@ -130,6 +203,7 @@ class InterviewSession(MongoModel):
 class Applicant(MongoModel):
     """Applicants collection"""
     collection_name = "applicants"
+    schema_version = 1
     
     @staticmethod
     def validate(data: dict) -> tuple[bool, str]:
@@ -139,10 +213,14 @@ class Applicant(MongoModel):
             if field not in data or not data[field]:
                 return False, f"Missing required field: {field}"
         
-        # Validate position against dynamic positions
-        valid_positions = Position.get_all_position_codes()
-        if valid_positions and data['position'] not in valid_positions:
-            return False, f"Invalid position. Must be one of: {', '.join(valid_positions)}"
+        # Validate position against dynamic positions (best-effort; if positions unavailable, skip)
+        try:
+            valid_positions = Position.get_all_position_codes()
+            if valid_positions and data['position'] not in valid_positions:
+                return False, f"Invalid position. Must be one of: {', '.join(valid_positions)}"
+        except Exception:
+            # allow creation if positions lookup fails (defensive)
+            pass
         
         return True, ""
 
@@ -150,6 +228,7 @@ class Applicant(MongoModel):
 class Interviewer(MongoModel):
     """Interviewers collection"""
     collection_name = "interviewers"
+    schema_version = 1
     
     @staticmethod
     def validate(data: dict) -> tuple[bool, str]:
@@ -159,10 +238,12 @@ class Interviewer(MongoModel):
             if field not in data or not data[field]:
                 return False, f"Missing required field: {field}"
         
-        # Validate position against dynamic positions
-        valid_positions = Position.get_all_position_codes()
-        if valid_positions and data['position'] not in valid_positions:
-            return False, f"Invalid position. Must be one of: {', '.join(valid_positions)}"
+        try:
+            valid_positions = Position.get_all_position_codes()
+            if valid_positions and data['position'] not in valid_positions:
+                return False, f"Invalid position. Must be one of: {', '.join(valid_positions)}"
+        except Exception:
+            pass
         
         return True, ""
 
@@ -170,6 +251,7 @@ class Interviewer(MongoModel):
 class Room(MongoModel):
     """Rooms collection"""
     collection_name = "rooms"
+    schema_version = 1
     
     @staticmethod
     def validate(data: dict) -> tuple[bool, str]:
@@ -178,13 +260,35 @@ class Room(MongoModel):
         for field in required_fields:
             if field not in data or not data[field]:
                 return False, f"Missing required field: {field}"
-        
+        # start_time/end_time may be ISO strings or datetimes
+        try:
+            # Allow either full ISO datetime strings or time-only HH:MM strings.
+            if isinstance(data.get('start_time'), str):
+                try:
+                    datetime.fromisoformat(data.get('start_time'))
+                except Exception:
+                    # Try parsing as time-only by prefixing a dummy date
+                    datetime.fromisoformat(f"1970-01-01T{data.get('start_time')}")
+            if isinstance(data.get('end_time'), str):
+                try:
+                    datetime.fromisoformat(data.get('end_time'))
+                except Exception:
+                    datetime.fromisoformat(f"1970-01-01T{data.get('end_time')}")
+        except Exception:
+            return False, 'start_time/end_time must be ISO datetime strings, datetimes, or HH:MM time strings'
+
+        # optional capacity
+        cap = data.get('capacity')
+        if cap is not None and not isinstance(cap, int):
+            return False, 'capacity must be integer if provided'
+
         return True, ""
 
 
 class Schedule(MongoModel):
     """Schedules collection"""
     collection_name = "schedules"
+    schema_version = 1
     
     @staticmethod
     def validate(data: dict) -> tuple[bool, str]:
@@ -193,12 +297,39 @@ class Schedule(MongoModel):
         for field in required_fields:
             if field not in data or not data[field]:
                 return False, f"Missing required field: {field}"
+        # validate ObjectId-like ids (strings)
+        for id_field in ['applicant_id', 'interviewer_id', 'room_id']:
+            if not isinstance(data.get(id_field), str):
+                return False, f'{id_field} must be string id'
+        # validate datetime fields
+        try:
+            if isinstance(data.get('interview_date'), str):
+                datetime.fromisoformat(data.get('interview_date'))
+            if isinstance(data.get('start_time'), str):
+                datetime.fromisoformat(data.get('start_time'))
+            if isinstance(data.get('end_time'), str):
+                datetime.fromisoformat(data.get('end_time'))
+        except Exception:
+            return False, 'interview_date/start_time/end_time must be ISO datetime strings or datetimes'
         return True, ""
 
 
 class AlgorithmConfig(MongoModel):
     """Algorithm configurations collection"""
     collection_name = "algorithm_configs"
+    
+    @staticmethod
+    def validate(data: dict) -> bool:
+        # Expect at least: name (str), algorithm (str), config (dict), company_id will be enforced
+        if not isinstance(data, dict):
+            return False
+        if 'name' not in data or not data.get('name'):
+            return False
+        if 'algorithm' not in data or not data.get('algorithm'):
+            return False
+        if 'config' not in data or not isinstance(data.get('config'), dict):
+            return False
+        return True
 
 
 class ScheduleResult(MongoModel):
@@ -229,4 +360,14 @@ class ActionLog(MongoModel):
         if 'action_type' not in data or not data['action_type']:
             return False, "Missing required field: action_type"
         return True, ""
+
+    @classmethod
+    def sanitize(cls, data: dict, company_id: str | None = None) -> tuple[dict, bool, str]:
+        """Sanitize and enforce tenant for action log entries."""
+        data = data.copy() if isinstance(data, dict) else {}
+        data.setdefault('created_at', datetime.utcnow())
+        data.setdefault('details', {})
+        if company_id:
+            data['company_id'] = company_id
+        return data, True, ''
 

@@ -1,7 +1,7 @@
 import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { authAPI } from "../services/api";
+import { authAPI, companiesAPI } from "../services/api";
 import { useCurrentCompany } from "../hooks/useCurrentCompany";
 import {
   FiHome,
@@ -52,40 +52,86 @@ const Layout = () => {
           username: form.username,
           password: form.password,
         });
-        const { token, username, company_id, role } = res.data;
+        const { token, username: respUsername, company_id, role } = res.data;
+
+        // Xóa các key cũ có thể gây nhiễu
+        localStorage.removeItem("selectedCompany");
+        localStorage.removeItem("company_id");
+
+        // Lưu token để axios interceptor gửi Authorization
         localStorage.setItem("auth_token", token);
-        localStorage.setItem("auth_username", username);
+        localStorage.setItem("auth_username", respUsername);
         if (role) {
           localStorage.setItem("auth_role", role);
           setRole(role);
+        } else {
+          localStorage.removeItem("auth_role");
+          setRole(null);
         }
         if (company_id) {
           localStorage.setItem("auth_company_id", company_id);
-          localStorage.setItem("selectedCompany", company_id);
           setCompanyId(company_id);
+        } else {
+          localStorage.removeItem("auth_company_id");
+          setCompanyId(null);
+        }
+        if (company_id) {
+          try {
+            const compRes = await companiesAPI.getById(company_id);
+            const comp = compRes.data;
+            if (comp) {
+              localStorage.setItem(
+                "auth_company_name",
+                comp.name || comp.code || ""
+              );
+              setCompanyName(comp.name || comp.code || "");
+            }
+          } catch (e) {}
         }
         setToken(token);
-        setUsername(username);
+        setUsername(respUsername);
       } else {
         const res = await authAPI.register({
           username: form.username,
           password: form.password,
           company_code: form.company_code,
         });
-        const { token, username, company_id, role } = res.data;
+        const { token, username: respUsername, company_id, role } = res.data;
+
+        localStorage.removeItem("selectedCompany");
+        localStorage.removeItem("company_id");
+
         localStorage.setItem("auth_token", token);
-        localStorage.setItem("auth_username", username);
+        localStorage.setItem("auth_username", respUsername);
         if (role) {
           localStorage.setItem("auth_role", role);
           setRole(role);
+        } else {
+          localStorage.removeItem("auth_role");
+          setRole(null);
         }
         if (company_id) {
           localStorage.setItem("auth_company_id", company_id);
-          localStorage.setItem("selectedCompany", company_id);
           setCompanyId(company_id);
+        } else {
+          localStorage.removeItem("auth_company_id");
+          setCompanyId(null);
+        }
+        if (company_id) {
+          try {
+            const compRes = await companiesAPI.getById(company_id);
+            const comp = compRes.data;
+            if (comp) {
+              localStorage.setItem(
+                "auth_company_name",
+                comp.name || comp.code || ""
+              );
+              setCompanyName(comp.name || comp.code || "");
+            }
+          } catch (e) {}
         }
         setToken(token);
-        setUsername(username);
+        setUsername(respUsername);
       }
       setShowAuth(false);
       setForm({ username: "", password: "", company_code: "" });
@@ -94,7 +140,6 @@ const Layout = () => {
     }
   };
 
-  // Resolve current company via shared hook so all pages are consistent.
   const { company: companyDoc, companyId: resolvedCompanyId } =
     useCurrentCompany();
 
@@ -116,9 +161,12 @@ const Layout = () => {
     { to: "/schedule", icon: FiCalendar, label: "Schedule View" },
     { to: "/compare", icon: FiBarChart2, label: "Comparison" },
     { to: "/company", icon: FiSettings, label: "Company" },
-    // Admin-only: Action Logs
+    // Admin-only: Action Logs + GA Dev Mode
     ...(role === "admin"
-      ? [{ to: "/logs", icon: FiBarChart2, label: "Action Logs" }]
+      ? [
+          { to: "/logs", icon: FiBarChart2, label: "Action Logs" },
+          // { to: "/dev", icon: FiBarChart2, label: "GA Dev Mode" },
+        ]
       : []),
   ];
 

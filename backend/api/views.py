@@ -2,7 +2,8 @@
 API Views for Interview Scheduler - MongoDB compatible version
 """
 from rest_framework import status
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, parser_classes
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.conf import settings
@@ -48,6 +49,36 @@ def normalize_data(items):
         if '_id' in item:
             item['id'] = item['_id']
     return items
+
+
+@api_view(["GET"])
+def whoami(request):
+    """Debug endpoint to inspect current authenticated user and company.
+
+    Helps verify token -> company_id mapping in multi-tenant scenarios.
+    """
+    user = get_request_user(request)
+    company_id = derive_company_id(request)
+
+    if not user:
+        return Response(
+            {"authenticated": False, "company_id": company_id},
+            status=status.HTTP_200_OK,
+        )
+
+    return Response(
+        {
+            "authenticated": True,
+            "user": {
+                "id": str(user.get("_id")),
+                "username": user.get("username"),
+                "role": user.get("role"),
+                "company_id": user.get("company_id"),
+            },
+            "company_id": company_id,
+        },
+        status=status.HTTP_200_OK,
+    )
 
 
 def log_action(request, action_type: str, **kwargs):
@@ -175,39 +206,57 @@ def _filter_by_session_constraints(schedule_data, current_session):
 
 @api_view(['GET'])
 def current_company(request):
-    """Return the company document for the authenticated user.
+    """Return the current company for the authenticated user.
 
-    Uses derive_company_id(request) so we never rely on a client-provided
-    company_id. This keeps company access tied to the auth token and avoids
-    stale IDs after data reset.
+    This endpoint is intentionally strict:
+    - If the token cannot be resolved to a user/company_id -> 404
+    - If the referenced company document does not exist -> 404
+
+    We avoid auto-creating fallback companies here because that hides
+    data problems (e.g. seeded Demo Company vs. empty "Company for demo").
+    The seed script `scripts/import_sample_data.py` is the source of truth
+    for attaching users (like "demo") to real companies with data.
     """
     try:
         company_id = derive_company_id(request)
+        fallback_used = False
+        if not company_id:
+            # Fallback: allow client to provide company id (useful when Authorization
+            # header is not forwarded by proxies). The frontend stores `auth_company_id`
+            # in localStorage after login; include it as `X-Auth-Company-Id` header or
+            # as query param `company_id` when calling `/companies/current/`.
+            company_id = request.headers.get('X-Auth-Company-Id') or request.GET.get('company_id')
+            if company_id:
+                fallback_used = True
 
-        # If user has no company_id or it points to a deleted company,
-        # transparently attach them to the first available company.
-        doc = None
-        if company_id:
-            doc = Company.find_one({'_id': ObjectId(str(company_id))})
+        if not company_id:
+            return Response(
+                {'error': 'No company associated with user'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
-        if not doc:
-            # Fallback: pick any existing company (first one)
-            companies = Company.find_all({}, limit=1)
-            if not companies:
-                return Response({'detail': 'No companies available'}, status=status.HTTP_404_NOT_FOUND)
-            doc = companies[0]
-            # Also update the user document so future derive_company_id uses this
-            try:
-                user = get_request_user(request)
-                if user and user.get('_id'):
-                    User.update({'_id': user['_id']}, {'company_id': doc['_id']})
-            except Exception:
-                pass
+        # Company id may be an ObjectId string or a company code; try both
+        company = None
+        try:
+            company = Company.find_one({'_id': ObjectId(company_id)})
+        except Exception:
+            # not a valid ObjectId, try lookup by code
+            company = Company.find_one({'code': company_id})
 
-        doc = to_json_safe(doc)
-        if '_id' in doc:
-            doc['id'] = doc['_id']
-        return Response(doc)
+        if not company:
+            return Response(
+                {'error': 'Company not found for this user'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if fallback_used:
+            # include a debug hint so client logs can show why fallback was used
+            company['_debug_fallback'] = True
+
+        company = to_json_safe(company)
+        if '_id' in company:
+            company['id'] = company['_id']
+        return Response(company, status=status.HTTP_200_OK)
     except Exception as e:
         return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -219,8 +268,15 @@ def run_genetic_algorithm_variant2(request):
         session_id = request.data.get('session_id')
         if not session_id:
             return Response({'error': 'session_id is required'}, status=status.HTTP_400_BAD_REQUEST)
-        company_id = request.data.get('company_id') or derive_company_id(request)
+        company_id = derive_company_id(request)
+        if not company_id:
+            return Response({'error': 'Unable to resolve company from token'}, status=status.HTTP_400_BAD_REQUEST)
         dry_run = request.data.get('dry_run', False)
+        # Ensure session belongs to current company
+        session = InterviewSession.find_one({'_id': ObjectId(str(session_id)), 'company_id': company_id})
+        if not session:
+            return Response({'error': 'Session not found for this company'}, status=status.HTTP_404_NOT_FOUND)
+
         applicants = normalize_data(InterviewSession.get_session_applicants(session_id))
         interviewers = normalize_data(InterviewSession.get_session_interviewers(session_id))
         rooms = normalize_data(InterviewSession.get_session_rooms(session_id))
@@ -299,8 +355,15 @@ def run_genetic_algorithm_variant3(request):
         session_id = request.data.get('session_id')
         if not session_id:
             return Response({'error': 'session_id is required'}, status=status.HTTP_400_BAD_REQUEST)
-        company_id = request.data.get('company_id') or derive_company_id(request)
+        company_id = derive_company_id(request)
+        if not company_id:
+            return Response({'error': 'Unable to resolve company from token'}, status=status.HTTP_400_BAD_REQUEST)
         dry_run = request.data.get('dry_run', False)
+        # Ensure session belongs to current company
+        session = InterviewSession.find_one({'_id': ObjectId(str(session_id)), 'company_id': company_id})
+        if not session:
+            return Response({'error': 'Session not found for this company'}, status=status.HTTP_404_NOT_FOUND)
+
         applicants = normalize_data(InterviewSession.get_session_applicants(session_id))
         interviewers = normalize_data(InterviewSession.get_session_interviewers(session_id))
         rooms = normalize_data(InterviewSession.get_session_rooms(session_id))
@@ -372,13 +435,17 @@ def run_genetic_algorithm_variant3(request):
 
 
 @api_view(['POST'])
+@parser_classes([MultiPartParser, FormParser, JSONParser])
 def import_excel(request):
     """Import data from Excel file"""
     try:
         file = request.FILES.get('file')
         data_type = request.data.get('type')  # 'applicants', 'interviewers', 'rooms', 'all'
         session_id = request.data.get('session_id')
-        company_id = request.data.get('company_id') or derive_company_id(request)
+        company_id = derive_company_id(request)
+
+        if not company_id:
+            return Response({'error': 'Unable to resolve company from token'}, status=status.HTTP_400_BAD_REQUEST)
         
         if not file:
             return Response({'error': 'No file provided'}, status=status.HTTP_400_BAD_REQUEST)
@@ -394,33 +461,29 @@ def import_excel(request):
             if 'applicants' in sheets:
                 df = pd.read_excel(xls, sheets['applicants'])
                 records = df.to_dict('records')
-                if company_id:
-                    for r in records:
-                        r['company_id'] = r.get('company_id') or company_id
+                for r in records:
+                    r['company_id'] = r.get('company_id') or company_id
                 created_ids['applicants'] = Applicant.bulk_create(records)
                 total_counts['applicants'] = len(records)
             if 'interviewers' in sheets:
                 df = pd.read_excel(xls, sheets['interviewers'])
                 records = df.to_dict('records')
-                if company_id:
-                    for r in records:
-                        r['company_id'] = r.get('company_id') or company_id
+                for r in records:
+                    r['company_id'] = r.get('company_id') or company_id
                 created_ids['interviewers'] = Interviewer.bulk_create(records)
                 total_counts['interviewers'] = len(records)
             if 'rooms' in sheets:
                 df = pd.read_excel(xls, sheets['rooms'])
                 records = df.to_dict('records')
-                if company_id:
-                    for r in records:
-                        r['company_id'] = r.get('company_id') or company_id
+                for r in records:
+                    r['company_id'] = r.get('company_id') or company_id
                 created_ids['rooms'] = Room.bulk_create(records)
                 total_counts['rooms'] = len(records)
         elif data_type in ('applicants','interviewers','rooms'):
             df = pd.read_excel(file)
             records = df.to_dict('records')
-            if company_id:
-                for r in records:
-                    r['company_id'] = r.get('company_id') or company_id
+            for r in records:
+                r['company_id'] = r.get('company_id') or company_id
             if data_type == 'applicants':
                 created_ids['applicants'] = Applicant.bulk_create(records)
                 total_counts['applicants'] = len(records)
@@ -527,11 +590,14 @@ def export_schedules(request):
 
         # Resolve session ----------------------------------------------------
         session_id = request.query_params.get('session_id')
-        company_id = request.query_params.get('company_id') or derive_company_id(request)
+        company_id = derive_company_id(request)
 
         session_doc = None
         if session_id:
-            session_doc = InterviewSession.find_by_id(session_id)
+            # Validate the session belongs to the caller's company
+            session_doc = InterviewSession.find_one({'_id': ObjectId(str(session_id)), 'company_id': company_id})
+            if not session_doc:
+                return Response({'error': 'Session not found for this company'}, status=status.HTTP_404_NOT_FOUND)
         else:
             # Best effort: export for active session of this company
             active = _get_active_session_or_none(company_id)
@@ -835,11 +901,13 @@ class CompanyAPIView(APIView):
         if pk:
             if str(pk) != str(cid):
                 return Response({'error': 'Company not found'}, status=status.HTTP_404_NOT_FOUND)
-            company = Company.find_by_id(pk)
+            # Bypass tenant scoping when loading the company document itself
+            company = Company.find_by_id(pk, company_id=None)
             if company:
                 return Response(company)
             return Response({'error': 'Company not found'}, status=status.HTTP_404_NOT_FOUND)
-        company = Company.find_by_id(cid)
+        # Return the current company document (do not filter by company_id)
+        company = Company.find_by_id(cid, company_id=None)
         return Response([company] if company else [])
 
     def post(self, request):
@@ -974,7 +1042,14 @@ def run_genetic_algorithm(request):
         session_id = request.data.get('session_id')
         if not session_id:
             return Response({'error': 'session_id is required'}, status=status.HTTP_400_BAD_REQUEST)
-        company_id = request.data.get('company_id') or derive_company_id(request)
+        company_id = derive_company_id(request)
+        if not company_id:
+            return Response({'error': 'Unable to resolve company from token'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Ensure session belongs to current company
+        session = InterviewSession.find_one({'_id': ObjectId(str(session_id)), 'company_id': company_id})
+        if not session:
+            return Response({'error': 'Session not found for this company'}, status=status.HTTP_404_NOT_FOUND)
         
         # Get data from MongoDB
         # Select only entities belonging to the chosen session
@@ -1089,7 +1164,15 @@ def run_genetic_algorithm_variant(request):
         session_id = request.data.get('session_id')
         if not session_id:
             return Response({'error': 'session_id is required'}, status=status.HTTP_400_BAD_REQUEST)
-        company_id = request.data.get('company_id') or derive_company_id(request)
+        company_id = derive_company_id(request)
+        if not company_id:
+            return Response({'error': 'Unable to resolve company from token'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Ensure session belongs to current company
+        session = InterviewSession.find_one({'_id': ObjectId(str(session_id)), 'company_id': company_id})
+        if not session:
+            return Response({'error': 'Session not found for this company'}, status=status.HTTP_404_NOT_FOUND)
+        
         applicants = normalize_data(InterviewSession.get_session_applicants(session_id))
         interviewers = normalize_data(InterviewSession.get_session_interviewers(session_id))
         rooms = normalize_data(InterviewSession.get_session_rooms(session_id))
@@ -1173,13 +1256,12 @@ def algorithm_results(request):
     """Get algorithm results.
 
     Optional query params:
-      - company_id: filter by company
       - session_id: filter by session
       - top: integer; if provided, return top-N by fitness_score (descending)
       - selected: 'true'|'false' to filter by is_selected flag
     """
     try:
-        company_id = request.query_params.get('company_id') or derive_company_id(request)
+        company_id = derive_company_id(request)
         session_id = request.query_params.get('session_id')
         top = request.query_params.get('top')
         selected = request.query_params.get('selected')
@@ -1225,7 +1307,14 @@ def compare_algorithms(request):
         session_id = request.data.get('session_id')
         if not session_id:
             return Response({'error': 'session_id is required'}, status=status.HTTP_400_BAD_REQUEST)
-        company_id = request.data.get('company_id') or request.data.get('companyId') or (config.get('company_id') if isinstance(config, dict) else None) or derive_company_id(request)
+        company_id = derive_company_id(request)
+        if not company_id:
+            return Response({'error': 'Unable to resolve company from token'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Ensure session belongs to current company
+        session = InterviewSession.find_one({'_id': ObjectId(str(session_id)), 'company_id': company_id})
+        if not session:
+            return Response({'error': 'Session not found for this company'}, status=status.HTTP_404_NOT_FOUND)
 
         # Session-scoped data only
         applicants = normalize_data(InterviewSession.get_session_applicants(session_id))
@@ -1399,16 +1488,13 @@ def compare_algorithms(request):
 
 @api_view(['GET'])
 def action_logs(request):
-    """List action logs, optionally filtered by type/company.
+    """List action logs filtered by action type, scoped strictly to caller's company.
 
-    For now this is a simple endpoint for admin/manager views.
     Query params:
       - action_type: filter by action_type
-      - company_id: restrict to given company (defaults to derive_company_id)
       - limit: max number of records (default 100)
     """
     try:
-        # RBAC: only admin can see all logs; manager sees only own company
         user = get_request_user(request)
         if not user:
             return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
@@ -1417,22 +1503,20 @@ def action_logs(request):
         if role not in ('admin', 'manager'):
             return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
 
+        # Always scope to token-derived company (no client override)
+        company_id = derive_company_id(request)
+        if not company_id:
+            return Response({'error': 'Unable to resolve company from token'}, status=status.HTTP_400_BAD_REQUEST)
+
         action_type = request.query_params.get('action_type')
-        # Admin may optionally pass company_id to filter; manager is always scoped
-        if role == 'admin':
-            company_id = request.query_params.get('company_id') or None
-        else:  # manager
-            company_id = user.get('company_id') or derive_company_id(request)
         try:
             limit = int(request.query_params.get('limit', 100))
         except ValueError:
             limit = 100
 
-        query = {}
+        query = {'company_id': company_id}
         if action_type:
             query['action_type'] = action_type
-        if company_id:
-            query['company_id'] = company_id
 
         logs = ActionLog.find_all(query, limit=limit, sort=[('created_at', -1)])
         for l in logs:
@@ -1455,7 +1539,13 @@ def generate_top_schedules(request):
         session_id = request.data.get('session_id')
         if not session_id:
             return Response({'error': 'session_id is required'}, status=status.HTTP_400_BAD_REQUEST)
-        company_id = request.data.get('company_id') or derive_company_id(request)
+        company_id = derive_company_id(request)
+        if not company_id:
+            return Response({'error': 'Unable to resolve company from token'}, status=status.HTTP_400_BAD_REQUEST)
+        # Ensure session belongs to caller's company
+        session = InterviewSession.find_one({'_id': ObjectId(str(session_id)), 'company_id': company_id})
+        if not session:
+            return Response({'error': 'Session not found for this company'}, status=status.HTTP_404_NOT_FOUND)
         applicants = normalize_data(InterviewSession.get_session_applicants(session_id))
         interviewers = normalize_data(InterviewSession.get_session_interviewers(session_id))
         rooms = normalize_data(InterviewSession.get_session_rooms(session_id))
@@ -1518,14 +1608,23 @@ def choose_schedule_result(request):
     try:
         result_id = request.data.get('result_id')
         session_id = request.data.get('session_id')
-        company_id = request.data.get('company_id') or derive_company_id(request)
+        company_id = derive_company_id(request)
         if not result_id:
             return Response({'error': 'result_id required'}, status=status.HTTP_400_BAD_REQUEST)
         if not session_id:
             return Response({'error': 'session_id required'}, status=status.HTTP_400_BAD_REQUEST)
+        if not company_id:
+            return Response({'error': 'Unable to resolve company from token'}, status=status.HTTP_400_BAD_REQUEST)
+        # Validate session ownership
+        session = InterviewSession.find_one({'_id': ObjectId(str(session_id)), 'company_id': company_id})
+        if not session:
+            return Response({'error': 'Session not found for this company'}, status=status.HTTP_404_NOT_FOUND)
+
         result = ScheduleResult.find_by_id(result_id)
         if not result:
             return Response({'error': 'Result not found'}, status=status.HTTP_404_NOT_FOUND)
+        if str(result.get('company_id')) != str(company_id) or str(result.get('session_id')) != str(session_id):
+            return Response({'error': 'Result does not belong to this company/session'}, status=status.HTTP_403_FORBIDDEN)
         schedule_data = result.get('schedule_data', [])
         # Clear existing schedules for provided session
         Schedule.delete_all({'session_id': session_id})
@@ -1563,17 +1662,24 @@ class AlgorithmConfigAPIView(APIView):
     """API endpoint for Algorithm Configuration"""
     
     def get(self, request, pk=None):
+        company_id = derive_company_id(request)
         if pk:
             config = AlgorithmConfig.find_by_id(pk)
-            if config:
+            if config and (not company_id or str(config.get('company_id')) == str(company_id)):
                 return Response(config)
             return Response({'error': 'Config not found'}, status=status.HTTP_404_NOT_FOUND)
-        
-        configs = AlgorithmConfig.find_all()
+        # List only configs belonging to caller's company
+        filt = {'company_id': company_id} if company_id else {}
+        configs = AlgorithmConfig.find_all(filt or None)
         return Response(configs)
     
     def post(self, request):
-        data = request.data
+        data = request.data.copy()
+        cid = derive_company_id(request)
+        if not cid:
+            return Response({'error': 'Unable to resolve company from token'}, status=status.HTTP_400_BAD_REQUEST)
+        # Force company scoping
+        data['company_id'] = cid
         if not AlgorithmConfig.validate(data):
             return Response({'error': 'Invalid data'}, status=status.HTTP_400_BAD_REQUEST)
         
@@ -1584,7 +1690,7 @@ class AlgorithmConfigAPIView(APIView):
         log_action(
             request,
             'CREATE_CONFIG',
-            company_id=data.get('company_id') or derive_company_id(request),
+            company_id=cid,
             resource_type='config',
             resource_id=str(config_id),
             details={
@@ -1596,31 +1702,33 @@ class AlgorithmConfigAPIView(APIView):
         return Response(config, status=status.HTTP_201_CREATED)
     
     def put(self, request, pk):
-        result = AlgorithmConfig.update(pk, request.data)
-        if result:
-            config = AlgorithmConfig.find_by_id(pk)
-
-            # Log config update
+        company_id = derive_company_id(request)
+        config = AlgorithmConfig.find_by_id(pk)
+        if not config or str(config.get('company_id')) != str(company_id):
+            return Response({'error': 'Config not found'}, status=status.HTTP_404_NOT_FOUND)
+        if AlgorithmConfig.update(pk, request.data):
+            updated = AlgorithmConfig.find_by_id(pk)
             log_action(
                 request,
                 'UPDATE_CONFIG',
-                company_id=config.get('company_id') or derive_company_id(request),
+                company_id=company_id,
                 resource_type='config',
                 resource_id=str(pk),
-                details={
-                    'changes': request.data,
-                },
+                details={'changes': request.data},
             )
-
-            return Response(config)
+            return Response(updated)
         return Response({'error': 'Config not found'}, status=status.HTTP_404_NOT_FOUND)
     
     def delete(self, request, pk):
+        company_id = derive_company_id(request)
+        config = AlgorithmConfig.find_by_id(pk)
+        if not config or str(config.get('company_id')) != str(company_id):
+            return Response({'error': 'Config not found'}, status=status.HTTP_404_NOT_FOUND)
         if AlgorithmConfig.delete(pk):
-            # Log config deletion
             log_action(
                 request,
                 'DELETE_CONFIG',
+                company_id=company_id,
                 resource_type='config',
                 resource_id=str(pk),
             )
@@ -1640,7 +1748,9 @@ def activate_algorithm_config(request, pk: str):
         if not config:
             return Response({'error': 'Config not found'}, status=status.HTTP_404_NOT_FOUND)
 
-        company_id = config.get('company_id') or derive_company_id(request)
+        company_id = derive_company_id(request)
+        if not company_id or str(config.get('company_id')) != str(company_id):
+            return Response({'error': 'Config not found'}, status=status.HTTP_404_NOT_FOUND)
 
         # Deactivate other configs of same company (best effort)
         if company_id:
@@ -1672,17 +1782,12 @@ def activate_algorithm_config(request, pk: str):
 
 @api_view(['GET'])
 def get_schedule_conflicts(request):
-    """Get schedule conflicts"""
+    """Get schedule conflicts scoped by company."""
     try:
-        from interview_scheduler.settings import mongodb
-        
-        if mongodb is None:
-            return Response(
-                {'error': 'MongoDB not connected'},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE
-            )
-        
-        schedules = list(mongodb['schedules'].find({}))
+        company_id = derive_company_id(request)
+        # Use model helper to fetch schedules filtered by company
+        filt = {'company_id': company_id} if company_id else None
+        schedules = Schedule.find_all(filt)
         conflicts = []
         
         # Check for time conflicts
@@ -1693,8 +1798,8 @@ def get_schedule_conflicts(request):
                     schedule1.get('start_time') == schedule2.get('start_time')):
                     conflicts.append({
                         'type': 'interviewer_conflict',
-                        'schedule1_id': str(schedule1['_id']),
-                        'schedule2_id': str(schedule2['_id']),
+                        'schedule1_id': str(schedule1.get('_id')),
+                        'schedule2_id': str(schedule2.get('_id')),
                         'interviewer_id': schedule1.get('interviewer_id'),
                         'time': schedule1.get('start_time')
                     })
@@ -1704,8 +1809,8 @@ def get_schedule_conflicts(request):
                     schedule1.get('start_time') == schedule2.get('start_time')):
                     conflicts.append({
                         'type': 'room_conflict',
-                        'schedule1_id': str(schedule1['_id']),
-                        'schedule2_id': str(schedule2['_id']),
+                        'schedule1_id': str(schedule1.get('_id')),
+                        'schedule2_id': str(schedule2.get('_id')),
                         'room_id': schedule1.get('room_id'),
                         'time': schedule1.get('start_time')
                     })
@@ -1715,8 +1820,8 @@ def get_schedule_conflicts(request):
                     schedule1.get('start_time') == schedule2.get('start_time')):
                     conflicts.append({
                         'type': 'applicant_conflict',
-                        'schedule1_id': str(schedule1['_id']),
-                        'schedule2_id': str(schedule2['_id']),
+                        'schedule1_id': str(schedule1.get('_id')),
+                        'schedule2_id': str(schedule2.get('_id')),
                         'applicant_id': schedule1.get('applicant_id'),
                         'time': schedule1.get('start_time')
                     })
@@ -1738,24 +1843,27 @@ class PositionAPIView(APIView):
     """API endpoint for Positions"""
     
     def get(self, request, pk=None):
+        company_id = derive_company_id(request)
         if pk:
-            position = Position.find_by_id(pk)
+            position = Position.find_one({'_id': ObjectId(str(pk)), 'company_id': company_id})
             if position:
                 return Response(position)
             return Response({'error': 'Position not found'}, status=status.HTTP_404_NOT_FOUND)
         
-        # Get only active positions by default
+        # Get only active positions by default for user's company
         is_active = request.query_params.get('is_active', 'true').lower() == 'true'
-        filter_dict = {'is_active': is_active} if request.query_params.get('is_active') else {}
+        filter_dict = {'company_id': company_id} if company_id else {}
+        if request.query_params.get('is_active'):
+            filter_dict['is_active'] = is_active
         positions = Position.find_all(filter_dict)
         return Response(positions)
     
     def post(self, request):
-        data = request.data
-        if 'company_id' not in data:
-            cid = derive_company_id(request)
-            if cid:
-                data['company_id'] = cid
+        data = request.data.copy()
+        cid = derive_company_id(request)
+        if not cid:
+            return Response({'error': 'Unable to resolve company from token'}, status=status.HTTP_400_BAD_REQUEST)
+        data['company_id'] = cid
         is_valid, error_msg = Position.validate(data)
         if not is_valid:
             return Response({'error': error_msg}, status=status.HTTP_400_BAD_REQUEST)
@@ -1769,18 +1877,23 @@ class PositionAPIView(APIView):
         return Response(position, status=status.HTTP_201_CREATED)
     
     def put(self, request, pk):
-        data = request.data
-        if 'company_id' not in data:
-            cid = derive_company_id(request)
-            if cid:
-                data['company_id'] = cid
-        result = Position.update(pk, data)
+        company_id = derive_company_id(request)
+        existing = Position.find_one({'_id': ObjectId(str(pk)), 'company_id': company_id})
+        if not existing:
+            return Response({'error': 'Position not found'}, status=status.HTTP_404_NOT_FOUND)
+        
+        result = Position.update(pk, request.data)
         if result:
             position = Position.find_by_id(pk)
             return Response(position)
         return Response({'error': 'Position not found'}, status=status.HTTP_404_NOT_FOUND)
     
     def delete(self, request, pk):
+        company_id = derive_company_id(request)
+        existing = Position.find_one({'_id': ObjectId(str(pk)), 'company_id': company_id})
+        if not existing:
+            return Response({'error': 'Position not found'}, status=status.HTTP_404_NOT_FOUND)
+        
         if Position.delete(pk):
             return Response(status=status.HTTP_204_NO_CONTENT)
         return Response({'error': 'Position not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -1790,19 +1903,27 @@ class InterviewSessionAPIView(APIView):
     """API endpoint for Interview Sessions"""
     
     def get(self, request, pk=None):
+        company_id = derive_company_id(request)
         if pk:
-            session = InterviewSession.find_by_id(pk)
+            # Ensure user can only access sessions from their company
+            session = InterviewSession.find_one({'_id': ObjectId(str(pk)), 'company_id': company_id})
             if session:
                 return Response(session)
             return Response({'error': 'Session not found'}, status=status.HTTP_404_NOT_FOUND)
-        # Optional company filter
-        company_id = request.query_params.get('company_id') or derive_company_id(request)
+        # List all sessions for user's company only
         filt = {'company_id': company_id} if company_id else {}
         sessions = InterviewSession.find_all(filt, sort=[["created_at", -1]])
         return Response(sessions)
     
     def post(self, request):
-        data = request.data
+        data = request.data.copy()
+        company_id = derive_company_id(request)
+        if not company_id:
+            return Response({'error': 'Unable to resolve company from token'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Force company_id from token
+        data['company_id'] = company_id
+        
         is_valid, error_msg = InterviewSession.validate(data)
         if not is_valid:
             return Response({'error': error_msg}, status=status.HTTP_400_BAD_REQUEST)
@@ -1816,6 +1937,12 @@ class InterviewSessionAPIView(APIView):
         return Response(session, status=status.HTTP_201_CREATED)
     
     def put(self, request, pk):
+        company_id = derive_company_id(request)
+        # Ensure session belongs to user's company
+        existing = InterviewSession.find_one({'_id': ObjectId(str(pk)), 'company_id': company_id})
+        if not existing:
+            return Response({'error': 'Session not found'}, status=status.HTTP_404_NOT_FOUND)
+        
         result = InterviewSession.update(pk, request.data)
         if result:
             session = InterviewSession.find_by_id(pk)
@@ -1823,6 +1950,12 @@ class InterviewSessionAPIView(APIView):
         return Response({'error': 'Session not found'}, status=status.HTTP_404_NOT_FOUND)
     
     def delete(self, request, pk):
+        company_id = derive_company_id(request)
+        # Ensure session belongs to user's company
+        existing = InterviewSession.find_one({'_id': ObjectId(str(pk)), 'company_id': company_id})
+        if not existing:
+            return Response({'error': 'Session not found'}, status=status.HTTP_404_NOT_FOUND)
+        
         if InterviewSession.delete(pk):
             return Response(status=status.HTTP_204_NO_CONTENT)
         return Response({'error': 'Session not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -1832,7 +1965,7 @@ class InterviewSessionAPIView(APIView):
 def get_active_session(request):
     """Get the currently active interview session"""
     try:
-        company_id = request.query_params.get('company_id') or derive_company_id(request)
+        company_id = derive_company_id(request)
         session = _get_active_session_or_none(company_id)
         if session:
             return Response(session)
@@ -1846,14 +1979,25 @@ def get_active_session(request):
 
 @api_view(['POST'])
 def set_active_session(request, pk):
-    """Set a session as active (deactivates all others)"""
+    """Set a session as active. Do not automatically deactivate other sessions.
+
+    Historically this endpoint deactivated all other sessions for the company
+    which made it impossible to have multiple sessions active (useful for
+    running multiple simulations, preserving historical active flags, or
+    soft-activations). Change behaviour to only flip the requested session
+    to `is_active=True` and leave others unchanged.
+    """
     try:
-        company_id = derive_company_id(request) or request.data.get('company_id')
-        # Deactivate all sessions
-        filt = {'company_id': company_id} if company_id else {}
-        InterviewSession.get_collection().update_many(filt, {'$set': {'is_active': False}})
+        company_id = derive_company_id(request)
+        if not company_id:
+            return Response({'error': 'Unable to resolve company from token'}, status=status.HTTP_400_BAD_REQUEST)
         
-        # Activate the specified session
+        # Ensure session belongs to user's company
+        session = InterviewSession.find_one({'_id': ObjectId(str(pk)), 'company_id': company_id})
+        if not session:
+            return Response({'error': 'Session not found'}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Activate the specified session only (do not touch other sessions)
         result = InterviewSession.update(pk, {'is_active': True})
         if result:
             session = InterviewSession.find_by_id(pk)
@@ -1873,6 +2017,14 @@ def update_session_membership(request, pk):
     }
     """
     try:
+        # Ensure session belongs to caller's company
+        company_id = derive_company_id(request)
+        if not company_id:
+            return Response({'error': 'Unable to resolve company from token'}, status=status.HTTP_400_BAD_REQUEST)
+        session = InterviewSession.find_one({'_id': ObjectId(str(pk)), 'company_id': company_id})
+        if not session:
+            return Response({'error': 'Session not found'}, status=status.HTTP_404_NOT_FOUND)
+
         payload = request.data or {}
         add = payload.get('add', {})
         remove = payload.get('remove', {})
@@ -1909,7 +2061,7 @@ def update_session_membership(request, pk):
 
         # Ensure we filter by proper ObjectId when pk is a string
         oid = ObjectId(pk) if isinstance(pk, str) else pk
-        InterviewSession.get_collection().update_one({'_id': oid}, ops)
+        InterviewSession.get_collection().update_one({'_id': oid, 'company_id': company_id}, ops)
         session = InterviewSession.find_by_id(pk)
         if not session:
             return Response({'error': 'Session not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -1922,8 +2074,10 @@ class ApplicantAPIView(APIView):
     """API endpoint for Applicants"""
 
     def get(self, request, pk=None):
+        company_id = derive_company_id(request)
         if pk:
-            item = Applicant.find_by_id(pk)
+            # Ensure item belongs to user's company
+            item = Applicant.find_one({'_id': ObjectId(str(pk)), 'company_id': company_id})
             if item:
                 return Response(item)
             return Response({'error': 'Applicant not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -1932,19 +2086,25 @@ class ApplicantAPIView(APIView):
         session_id = request.query_params.get('session_id')
         if session_id:
             items = InterviewSession.get_session_applicants(session_id)
+            # Double-check company scoping
+            if company_id:
+                items = [i for i in items if i.get('company_id') == company_id]
             if position:
                 items = [i for i in items if i.get('position') == position]
         else:
-            filter_dict = {'position': position} if position else {}
+            filter_dict = {'company_id': company_id} if company_id else {}
+            if position:
+                filter_dict['position'] = position
             items = Applicant.find_all(filter_dict)
         return Response(items)
 
     def post(self, request):
-        data = request.data
-        if 'company_id' not in data:
-            cid = derive_company_id(request)
-            if cid:
-                data['company_id'] = cid
+        data = request.data.copy()
+        cid = derive_company_id(request)
+        if not cid:
+            return Response({'error': 'Unable to resolve company from token'}, status=status.HTTP_400_BAD_REQUEST)
+        # Force company_id from token
+        data['company_id'] = cid
         is_valid, err = Applicant.validate(data)
         if not is_valid:
             return Response({'error': err}, status=status.HTTP_400_BAD_REQUEST)
@@ -1953,16 +2113,23 @@ class ApplicantAPIView(APIView):
         return Response(item, status=status.HTTP_201_CREATED)
 
     def put(self, request, pk):
-        data = request.data
-        if 'company_id' not in data:
-            cid = derive_company_id(request)
-            if cid:
-                data['company_id'] = cid
-        if Applicant.update(pk, data):
+        company_id = derive_company_id(request)
+        # Ensure item belongs to user's company
+        existing = Applicant.find_one({'_id': ObjectId(str(pk)), 'company_id': company_id})
+        if not existing:
+            return Response({'error': 'Applicant not found'}, status=status.HTTP_404_NOT_FOUND)
+        
+        if Applicant.update(pk, request.data):
             return Response(Applicant.find_by_id(pk))
         return Response({'error': 'Applicant not found'}, status=status.HTTP_404_NOT_FOUND)
 
     def delete(self, request, pk):
+        company_id = derive_company_id(request)
+        # Ensure item belongs to user's company
+        existing = Applicant.find_one({'_id': ObjectId(str(pk)), 'company_id': company_id})
+        if not existing:
+            return Response({'error': 'Applicant not found'}, status=status.HTTP_404_NOT_FOUND)
+        
         if Applicant.delete(pk):
             return Response(status=status.HTTP_204_NO_CONTENT)
         return Response({'error': 'Applicant not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -1972,8 +2139,9 @@ class InterviewerAPIView(APIView):
     """API endpoint for Interviewers"""
 
     def get(self, request, pk=None):
+        company_id = derive_company_id(request)
         if pk:
-            item = Interviewer.find_by_id(pk)
+            item = Interviewer.find_one({'_id': ObjectId(str(pk)), 'company_id': company_id})
             if item:
                 return Response(item)
             return Response({'error': 'Interviewer not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -1981,19 +2149,24 @@ class InterviewerAPIView(APIView):
         session_id = request.query_params.get('session_id')
         if session_id:
             items = InterviewSession.get_session_interviewers(session_id)
+            # Double-check company scoping
+            if company_id:
+                items = [i for i in items if i.get('company_id') == company_id]
             if position:
                 items = [i for i in items if i.get('position') == position]
         else:
-            filter_dict = {'position': position} if position else {}
+            filter_dict = {'company_id': company_id} if company_id else {}
+            if position:
+                filter_dict['position'] = position
             items = Interviewer.find_all(filter_dict)
         return Response(items)
 
     def post(self, request):
-        data = request.data
-        if 'company_id' not in data:
-            cid = derive_company_id(request)
-            if cid:
-                data['company_id'] = cid
+        data = request.data.copy()
+        cid = derive_company_id(request)
+        if not cid:
+            return Response({'error': 'Unable to resolve company from token'}, status=status.HTTP_400_BAD_REQUEST)
+        data['company_id'] = cid
         is_valid, err = Interviewer.validate(data)
         if not is_valid:
             return Response({'error': err}, status=status.HTTP_400_BAD_REQUEST)
@@ -2002,16 +2175,21 @@ class InterviewerAPIView(APIView):
         return Response(item, status=status.HTTP_201_CREATED)
 
     def put(self, request, pk):
-        data = request.data
-        if 'company_id' not in data:
-            cid = derive_company_id(request)
-            if cid:
-                data['company_id'] = cid
-        if Interviewer.update(pk, data):
+        company_id = derive_company_id(request)
+        existing = Interviewer.find_one({'_id': ObjectId(str(pk)), 'company_id': company_id})
+        if not existing:
+            return Response({'error': 'Interviewer not found'}, status=status.HTTP_404_NOT_FOUND)
+        
+        if Interviewer.update(pk, request.data):
             return Response(Interviewer.find_by_id(pk))
         return Response({'error': 'Interviewer not found'}, status=status.HTTP_404_NOT_FOUND)
 
     def delete(self, request, pk):
+        company_id = derive_company_id(request)
+        existing = Interviewer.find_one({'_id': ObjectId(str(pk)), 'company_id': company_id})
+        if not existing:
+            return Response({'error': 'Interviewer not found'}, status=status.HTTP_404_NOT_FOUND)
+        
         if Interviewer.delete(pk):
             return Response(status=status.HTTP_204_NO_CONTENT)
         return Response({'error': 'Interviewer not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -2021,24 +2199,29 @@ class RoomAPIView(APIView):
     """API endpoint for Rooms"""
 
     def get(self, request, pk=None):
+        company_id = derive_company_id(request)
         if pk:
-            item = Room.find_by_id(pk)
+            item = Room.find_one({'_id': ObjectId(str(pk)), 'company_id': company_id})
             if item:
                 return Response(item)
             return Response({'error': 'Room not found'}, status=status.HTTP_404_NOT_FOUND)
         session_id = request.query_params.get('session_id')
         if session_id:
             items = InterviewSession.get_session_rooms(session_id)
+            # Ensure company scoping
+            if company_id:
+                items = [i for i in items if i.get('company_id') == company_id]
         else:
-            items = Room.find_all()
+            filt = {'company_id': company_id} if company_id else {}
+            items = Room.find_all(filt)
         return Response(items)
 
     def post(self, request):
-        data = request.data
-        if 'company_id' not in data:
-            cid = derive_company_id(request)
-            if cid:
-                data['company_id'] = cid
+        data = request.data.copy()
+        cid = derive_company_id(request)
+        if not cid:
+            return Response({'error': 'Unable to resolve company from token'}, status=status.HTTP_400_BAD_REQUEST)
+        data['company_id'] = cid
         is_valid, err = Room.validate(data)
         if not is_valid:
             return Response({'error': err}, status=status.HTTP_400_BAD_REQUEST)
@@ -2047,16 +2230,21 @@ class RoomAPIView(APIView):
         return Response(item, status=status.HTTP_201_CREATED)
 
     def put(self, request, pk):
-        data = request.data
-        if 'company_id' not in data:
-            cid = derive_company_id(request)
-            if cid:
-                data['company_id'] = cid
+        company_id = derive_company_id(request)
+        existing = Room.find_one({'_id': ObjectId(str(pk)), 'company_id': company_id})
+        if not existing:
+            return Response({'error': 'Room not found'}, status=status.HTTP_404_NOT_FOUND)
+        data = request.data.copy()
+        data['company_id'] = company_id
         if Room.update(pk, data):
             return Response(Room.find_by_id(pk))
         return Response({'error': 'Room not found'}, status=status.HTTP_404_NOT_FOUND)
 
     def delete(self, request, pk):
+        company_id = derive_company_id(request)
+        existing = Room.find_one({'_id': ObjectId(str(pk)), 'company_id': company_id})
+        if not existing:
+            return Response({'error': 'Room not found'}, status=status.HTTP_404_NOT_FOUND)
         if Room.delete(pk):
             return Response(status=status.HTTP_204_NO_CONTENT)
         return Response({'error': 'Room not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -2066,18 +2254,25 @@ class ScheduleAPIView(APIView):
     """API endpoint for Schedules"""
 
     def get(self, request, pk=None):
+        company_id = derive_company_id(request)
         if pk:
-            item = Schedule.find_by_id(pk)
+            item = Schedule.find_one({'_id': ObjectId(str(pk)), 'company_id': company_id})
             if item:
                 return Response(item)
             return Response({'error': 'Schedule not found'}, status=status.HTTP_404_NOT_FOUND)
         session_id = request.query_params.get('session_id')
-        filter_dict = {'session_id': session_id} if session_id else {}
+        filter_dict = {'company_id': company_id} if company_id else {}
+        if session_id:
+            filter_dict['session_id'] = session_id
         items = Schedule.find_all(filter_dict)
         return Response(items)
 
     def post(self, request):
-        data = request.data
+        data = request.data.copy()
+        cid = derive_company_id(request)
+        if not cid:
+            return Response({'error': 'Unable to resolve company from token'}, status=status.HTTP_400_BAD_REQUEST)
+        data['company_id'] = cid
         is_valid, err = Schedule.validate(data)
         if not is_valid:
             return Response({'error': err}, status=status.HTTP_400_BAD_REQUEST)
@@ -2086,11 +2281,21 @@ class ScheduleAPIView(APIView):
         return Response(item, status=status.HTTP_201_CREATED)
 
     def put(self, request, pk):
+        company_id = derive_company_id(request)
+        existing = Schedule.find_one({'_id': ObjectId(str(pk)), 'company_id': company_id})
+        if not existing:
+            return Response({'error': 'Schedule not found'}, status=status.HTTP_404_NOT_FOUND)
+        
         if Schedule.update(pk, request.data):
             return Response(Schedule.find_by_id(pk))
         return Response({'error': 'Schedule not found'}, status=status.HTTP_404_NOT_FOUND)
 
     def delete(self, request, pk):
+        company_id = derive_company_id(request)
+        existing = Schedule.find_one({'_id': ObjectId(str(pk)), 'company_id': company_id})
+        if not existing:
+            return Response({'error': 'Schedule not found'}, status=status.HTTP_404_NOT_FOUND)
+        
         if Schedule.delete(pk):
             return Response(status=status.HTTP_204_NO_CONTENT)
         return Response({'error': 'Schedule not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -2098,16 +2303,32 @@ class ScheduleAPIView(APIView):
 
 @api_view(['GET'])
 def get_schedule_timeline(request):
-    """Return schedules grouped by room for timeline view."""
+    """Return schedules grouped by room for timeline view, scoped to company."""
     try:
         session_id = request.query_params.get('session_id')
-        filter_dict = {'session_id': session_id} if session_id else None
+        company_id = derive_company_id(request)
+        filter_dict = {'company_id': company_id}
+        if session_id:
+            # Validate session belongs to company
+            session = InterviewSession.find_one({'_id': ObjectId(str(session_id)), 'company_id': company_id})
+            if not session:
+                return Response({'error': 'Session not found'}, status=status.HTTP_404_NOT_FOUND)
+            filter_dict['session_id'] = session_id
         schedules = Schedule.find_all(filter_dict)
 
         # Build lookup maps with stringified ObjectIds for reliable matching
-        applicants = {str(a.get('_id')): a for a in Applicant.find_all()}
-        interviewers = {str(i.get('_id')): i for i in Interviewer.find_all()}
-        rooms = {str(r.get('_id')): r for r in Room.find_all()}
+        # Prefer session-scoped entities when session_id is provided, otherwise company-scoped
+        if session_id:
+            apps_list = InterviewSession.get_session_applicants(session_id)
+            ints_list = InterviewSession.get_session_interviewers(session_id)
+            rooms_list = InterviewSession.get_session_rooms(session_id)
+        else:
+            apps_list = Applicant.find_all({'company_id': company_id} if company_id else None)
+            ints_list = Interviewer.find_all({'company_id': company_id} if company_id else None)
+            rooms_list = Room.find_all({'company_id': company_id} if company_id else None)
+        applicants = {str(a.get('_id')): a for a in apps_list}
+        interviewers = {str(i.get('_id')): i for i in ints_list}
+        rooms = {str(r.get('_id')): r for r in rooms_list}
 
         timeline_grouped = {}
         for s in schedules:
@@ -2140,5 +2361,205 @@ def get_schedule_timeline(request):
         return Response(timeline_grouped)
     except Exception as e:
         print(f"Error in get_schedule_timeline: {str(e)}")
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# ---------------------------------------------------------------------------
+# GA Dev / Debug endpoints (stub implementation for frontend Dev Mode)
+# ---------------------------------------------------------------------------
+
+
+@api_view(['GET'])
+def latest_debug_run(request):
+    """Return a minimal stub GA debug run so Dev Mode can render.
+
+    This does NOT run a full GA; it just inspects recent ScheduleResult
+    documents for the caller's company and builds a lightweight structure
+    with a single generation and a few representative individuals.
+    """
+    try:
+        company_id = derive_company_id(request)
+        if not company_id:
+            return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        # Use last few ScheduleResult docs as pseudo "representative individuals"
+        results = ScheduleResult.find_all(
+            {'company_id': company_id},
+            limit=5,
+            sort=[('created_at', -1)],
+        )
+        reps = []
+        for idx, r in enumerate(results, start=1):
+            reps.append({
+                'individual_id': str(r.get('_id')),
+                'rank': idx,
+                'fitness': r.get('fitness_score', 0.0),
+                'selection_meta': {
+                    'is_selected_parent': False,
+                    'selection_prob': None,
+                },
+                'schedule_snapshot': [
+                    {
+                        'applicant_name': s.get('applicant_id'),
+                        'interviewer_name': s.get('interviewer_id'),
+                        'room_name': s.get('room_id'),
+                        'position': s.get('position'),
+                        'start_time': s.get('start_time'),
+                        'end_time': s.get('end_time'),
+                        'date': s.get('interview_date'),
+                        'has_conflict': False,
+                    }
+                    for s in r.get('schedule_data', [])
+                ],
+            })
+
+        payload = {
+            'run_id': 'stub',
+            'generations': [
+                {
+                    'index': 0,
+                    'stats': {
+                        'best_fitness': max((r.get('fitness', 0.0) for r in reps), default=0.0),
+                    },
+                    'representatives': reps,
+                }
+            ],
+        }
+        return Response(payload)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+def debug_schedule_detail(request):
+    """Stub schedule detail for mutation view.
+
+    Currently just returns the same snapshot for before/after mutation and
+    an empty mutation list, so frontend Dev Mode can render without errors.
+    """
+    try:
+        company_id = derive_company_id(request)
+        if not company_id:
+            return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        individual_id = request.query_params.get('individual_id')
+        if not individual_id:
+            return Response({'error': 'individual_id required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        res = ScheduleResult.find_one({'_id': ObjectId(str(individual_id)), 'company_id': company_id})
+        if not res:
+            return Response({'error': 'ScheduleResult not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        base = {
+            'individual_id': str(res.get('_id')),
+            'rank': 1,
+            'fitness': res.get('fitness_score', 0.0),
+            'schedule_snapshot': [
+                {
+                    'applicant_name': s.get('applicant_id'),
+                    'interviewer_name': s.get('interviewer_id'),
+                    'room_name': s.get('room_id'),
+                    'position': s.get('position'),
+                    'start_time': s.get('start_time'),
+                    'end_time': s.get('end_time'),
+                    'date': s.get('interview_date'),
+                }
+                for s in res.get('schedule_data', [])
+            ],
+        }
+
+        return Response({
+            'before_mutation': base,
+            'after_mutation': base,
+            'mutations': [],
+        })
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+def debug_crossover_detail(request):
+    """Stub crossover detail: returns the same individual as both parents and child."""
+    try:
+        company_id = derive_company_id(request)
+        if not company_id:
+            return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        child_id = request.query_params.get('child_id')
+        if not child_id:
+            return Response({'error': 'child_id required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        res = ScheduleResult.find_one({'_id': ObjectId(str(child_id)), 'company_id': company_id})
+        if not res:
+            return Response({'error': 'ScheduleResult not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        def to_ind(doc):
+            return {
+                'individual_id': str(doc.get('_id')),
+                'rank': 1,
+                'fitness': doc.get('fitness_score', 0.0),
+                'schedule_snapshot': [
+                    {
+                        'applicant_name': s.get('applicant_id'),
+                        'interviewer_name': s.get('interviewer_id'),
+                        'room_name': s.get('room_id'),
+                        'position': s.get('position'),
+                        'start_time': s.get('start_time'),
+                        'end_time': s.get('end_time'),
+                        'date': s.get('interview_date'),
+                    }
+                    for s in doc.get('schedule_data', [])
+                ],
+            }
+
+        ind = to_ind(res)
+        return Response({
+            'parent_a': ind,
+            'parent_b': ind,
+            'child_before': ind,
+            'child_after': ind,
+        })
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+def debug_lineage_detail(request):
+    """Stub lineage detail: returns the selected individual as the only parent and child."""
+    try:
+        company_id = derive_company_id(request)
+        if not company_id:
+            return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        individual_id = request.query_params.get('individual_id')
+        if not individual_id:
+            return Response({'error': 'individual_id required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        res = ScheduleResult.find_one({'_id': ObjectId(str(individual_id)), 'company_id': company_id})
+        if not res:
+            return Response({'error': 'ScheduleResult not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        def to_ind(doc):
+            return {
+                'individual_id': str(doc.get('_id')),
+                'rank': 1,
+                'fitness': doc.get('fitness_score', 0.0),
+                'schedule_snapshot': [
+                    {
+                        'applicant_name': s.get('applicant_id'),
+                        'interviewer_name': s.get('interviewer_id'),
+                        'room_name': s.get('room_id'),
+                        'position': s.get('position'),
+                        'start_time': s.get('start_time'),
+                        'end_time': s.get('end_time'),
+                        'date': s.get('interview_date'),
+                    }
+                    for s in doc.get('schedule_data', [])
+                ],
+            }
+
+        ind = to_ind(res)
+        return Response({'parents': [ind], 'child': ind})
+    except Exception as e:
         return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 

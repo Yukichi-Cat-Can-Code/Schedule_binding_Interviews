@@ -60,4 +60,11 @@ urlpatterns = [
     path('algorithm/topk/', views.generate_top_schedules, name='generate-topk'),
     path('algorithm/select/', views.choose_schedule_result, name='choose-schedule-result'),
     path('algorithm/results/', views.algorithm_results, name='algorithm-results'),
+
+    # GA Dev / Debug endpoints used by frontend Dev Mode
+    path('algorithm/debug/run/latest/', views.latest_debug_run, name='algorithm-debug-run-latest'),
+    path('algorithm/debug/schedule/', views.debug_schedule_detail, name='algorithm-debug-schedule'),
+    path('algorithm/debug/crossover/', views.debug_crossover_detail, name='algorithm-debug-crossover'),
+    path('algorithm/debug/lineage/', views.debug_lineage_detail, name='algorithm-debug-lineage'),
+    path('whoami/', views.whoami, name='whoami'),
 ]

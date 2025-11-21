@@ -1,6 +1,4 @@
-"""
-Script to import sample data for interview scheduling system
-"""
+
 import os
 import sys
 import django
@@ -26,6 +24,10 @@ def clear_all_data():
     Room.get_collection().delete_many({})
     Schedule.get_collection().delete_many({})
     ScheduleResult.get_collection().delete_many({})
+    try:
+        User.get_collection().delete_many({})
+    except Exception as e:
+        print(f"⚠️  Could not clear users: {e}")
     print("✅ Data cleared")
 
 
@@ -559,16 +561,22 @@ def main():
     
     try:
         clear_all_data()
-        # Create first demo company (DEMO)
-        company_id = Company.create({'name': 'Demo Company', 'code': 'DEMO', 'created_at': datetime.now()})
+        # Create first demo company (DEMO) by inserting directly to bypass
+        # tenant-enforced `create` which requires a company_id (companies are
+        # top-level and must be created without a tenant filter).
+        company_doc = {'name': 'Demo Company', 'code': 'DEMO', 'created_at': datetime.now()}
+        res = Company.get_collection().insert_one(company_doc)
+        company_id = str(res.inserted_id)
         create_positions(company_id)
         session_ids = create_interview_sessions(company_id)
         create_applicants_from_csv(company_id)
         create_interviewers(company_id)
         create_rooms(company_id)
 
-        # Create second demo company (SECOND)
-        company2_id = Company.create({'name': 'Second Demo Company', 'code': 'SECOND', 'created_at': datetime.now()})
+        # Create second demo company (SECOND) by direct insert as well
+        company2_doc = {'name': 'Second Demo Company', 'code': 'SECOND', 'created_at': datetime.now()}
+        res2 = Company.get_collection().insert_one(company2_doc)
+        company2_id = str(res2.inserted_id)
         # Reuse simple positions for second company
         create_positions(company2_id)
         # Simple sessions for second company

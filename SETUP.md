@@ -1,362 +1,277 @@
-# 🚀 Hướng dẫn Cài đặt và Chạy Project
+# SETUP — Cài đặt & Chạy dự án
 
-## ✅ Yêu cầu hệ thống
+Tài liệu này mô tả các bước rõ ràng để cài đặt, cấu hình, chạy và kiểm thử cả backend (Django) và frontend (React). Bao gồm lệnh cho Windows (CMD/PowerShell) và macOS/Linux.
 
-- **Python**: 3.10 trở lên
-- **Node.js**: 18.x trở lên
-- **MongoDB Atlas**: Account (free tier)
-- **Git**: Để clone repository
+**Mục lục**
+
+- Yêu cầu hệ thống
+- Cài đặt backend (venv, dependencies, env, DB)
+- Chạy backend (migrations, runserver, superuser)
+- Cài đặt & chạy frontend
+- Chạy tests
+- Cấu hình production & troubleshooting
 
 ---
 
-## 📥 Bước 1: Clone Repository
+**Yêu cầu hệ thống (recommended)**
 
-```bash
+- Python 3.10+ (3.10, 3.11 tested)
+- Node.js 18.x+ and npm
+- Git
+- MongoDB Atlas (hoặc MongoDB URI) — dùng để lưu dữ liệu chính
+- (Optional) Redis nếu dùng Celery
+
+---
+
+## 1 — Clone repository
+
+Mở terminal và chạy:
+
+```cmd
 git clone https://github.com/Yukichi-Cat-Can-Code/Schedule_binding_Interviews.git
 cd Schedule_binding_Interviews
 ```
 
 ---
 
-## 🐍 Bước 2: Setup Backend (Django)
+## 2 — Backend (Django)
 
-### 2.1. Tạo Virtual Environment
+Làm theo các bước dưới đây trong thư mục `backend/`.
 
-```bash
+### 2.1 Tạo và kích hoạt virtual environment
+
+Windows (CMD):
+
+```cmd
 cd backend
 python -m venv venv
-```
-
-### 2.2. Activate Virtual Environment
-
-**Windows (CMD):**
-
-```bash
 venv\Scripts\activate
 ```
 
-**Windows (PowerShell):**
+Windows (PowerShell):
 
-```bash
+```powershell
+cd backend
+python -m venv venv
 venv\Scripts\Activate.ps1
 ```
 
-**Linux/Mac:**
+macOS / Linux:
 
 ```bash
+cd backend
+python3 -m venv venv
 source venv/bin/activate
 ```
 
-### 2.3. Install Dependencies
+Nếu activation thành công, prompt sẽ hiển thị tên `venv`.
 
-```bash
+### 2.2 Cài dependencies
+
+Trong `backend` và venv đã kích hoạt:
+
+```cmd
+pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### 2.4. Setup MongoDB Atlas
+### 2.3 Cấu hình biến môi trường
 
-1. Truy cập [MongoDB Atlas](https://www.mongodb.com/cloud/atlas)
-2. Tạo account miễn phí
-3. Tạo cluster mới (chọn Free tier)
-4. Tạo database user (username & password)
-5. Whitelist IP: `0.0.0.0/0` (Allow access from anywhere)
-6. Copy Connection String
+Sao chép mẫu `.env.example` và chỉnh thông tin:
 
-### 2.5. Configure Environment Variables
+Windows (CMD):
 
-```bash
+```cmd
 copy .env.example .env
 ```
 
-Mở file `.env` và sửa:
+PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+macOS / Linux:
+
+```bash
+cp .env.example .env
+```
+
+Mở file `.env` và cập nhật ít nhất các mục sau:
+
+- `SECRET_KEY` — khóa bí mật Django
+- `DEBUG` — set `True` cho development
+- `ALLOWED_HOSTS` — ví dụ: `localhost,127.0.0.1`
+- `MONGODB_URI` — connection string MongoDB Atlas (ví dụ `mongodb+srv://<user>:<pass>@cluster0...`)
+- `MONGODB_NAME` — tên database (ví dụ `schedule_interview`)
+- `CORS_ALLOWED_ORIGINS` — ví dụ `http://localhost:3000,http://localhost:5173`
+- (Tùy chọn) `REDIS_URL` nếu dùng Celery
+
+Ví dụ (không lưu mật khẩu thật vào repo):
 
 ```env
-SECRET_KEY=your-django-secret-key-here
+SECRET_KEY=your-secret
 DEBUG=True
 ALLOWED_HOSTS=localhost,127.0.0.1
-
-# MongoDB Atlas Connection String
 MONGODB_URI=mongodb+srv://username:password@cluster0.xxxxx.mongodb.net/?retryWrites=true&w=majority
 MONGODB_NAME=schedule_interview
-
 CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
-
-# Redis (Optional - for Celery)
-REDIS_URL=redis://localhost:6379/0
-
-# Algorithm Settings (có thể giữ nguyên default)
-GA_POPULATION_SIZE=100
-GA_GENERATIONS=200
-GA_CROSSOVER_RATE=0.8
-GA_MUTATION_RATE=0.15
-
-WEIGHT_CONFLICT=0.4
-WEIGHT_IDLE=0.2
-WEIGHT_FAIRNESS=0.2
-WEIGHT_MATCHING=0.1
-WEIGHT_ROOM=0.1
 ```
 
-### 2.6. Run Migrations
+### 2.4 Migrations & tạo superuser
 
-```bash
+Chạy migrations (SQLite/Django models) và tạo superuser:
+
+```cmd
+# Trong CMD / PowerShell
 python manage.py makemigrations
 python manage.py migrate
-```
-
-### 2.7. Create Superuser (Admin)
-
-```bash
 python manage.py createsuperuser
 ```
 
-Nhập username, email, password
+Nhập username, email và password khi được yêu cầu.
 
-### 2.8. Run Development Server
+### 2.5 Chạy server (development)
 
-```bash
+```cmd
 python manage.py runserver
 ```
 
-✅ Backend chạy tại: `http://localhost:8000`
-✅ API docs: `http://localhost:8000/api/docs/`
-✅ Admin: `http://localhost:8000/admin/`
+- Backend mặc định chạy tại `http://127.0.0.1:8000`
+- API docs: `http://127.0.0.1:8000/api/docs/`
+- Admin: `http://127.0.0.1:8000/admin/`
+
+Muốn bind ra mọi interface (ví dụ dùng trong container/dev VM):
+
+```cmd
+python manage.py runserver 0.0.0.0:8000
+```
 
 ---
 
-## ⚛️ Bước 3: Setup Frontend (React)
+## 3 — Frontend (React / Vite)
 
-### 3.1. Install Dependencies
+Mở terminal mới (không cần venv). Vào thư mục `frontend/`.
 
-Mở terminal mới (giữ nguyên terminal backend):
+### 3.1 Cài dependencies
 
-```bash
+```cmd
 cd frontend
 npm install
 ```
 
-### 3.2. Configure Environment (Optional)
+### 3.2 Tạo file cấu hình frontend (tùy chọn)
 
-Tạo file `.env` trong thư mục `frontend`:
+Tạo `frontend/.env` nếu cần tùy chỉnh API URL:
 
 ```env
 VITE_API_URL=http://localhost:8000/api
 ```
 
-### 3.3. Run Development Server
+### 3.3 Chạy dev server
 
-```bash
+```cmd
 npm run dev
 ```
 
-✅ Frontend chạy tại: `http://localhost:3000` hoặc `http://localhost:5173`
+- Vite thường hiển thị port 5173 hoặc 3000 tùy cấu hình. Mở URL được in ra.
+
+### 3.4 Build production
+
+```cmd
+npm run build
+npm run preview
+```
 
 ---
 
-## 🎉 Bước 4: Kiểm tra hoạt động
+## 4 — Chạy tests
 
-1. Mở trình duyệt: `http://localhost:3000`
-2. Bạn sẽ thấy Dashboard của ứng dụng
-3. Thử import dữ liệu Excel hoặc thêm dữ liệu thủ công
+### Backend
+
+```cmd
+# Trong backend venv
+python manage.py test
+```
+
+Chạy test cụ thể app hoặc test name nếu cần (django supports -k type filters via pytest if configured).
+
+### Frontend
+
+Kiểm tra `package.json` để xem có script test/lint. Thường có:
+
+```cmd
+npm run lint
+# hoặc nếu có test
+npm test
+```
 
 ---
 
-## 📊 Bước 5: Import Sample Data
+## 5 — Một số lệnh hữu ích / benchmarks
 
-### 5.1. Chuẩn bị Excel File
+- Chạy một script Python trong `backend/scripts/`:
 
-Tạo file `interview_data.xlsx` với 3 sheets:
+```cmd
+# trong backend venv
+python backend\scripts\plot_ga_ndjson.py
+```
 
-**Sheet 1: Applicants**
+- Chạy benchmark (ví dụ):
 
-| Email           | Full Name    | Student ID | Available Time          | Position | Notes |
-| --------------- | ------------ | ---------- | ----------------------- | -------- | ----- |
-| son@example.com | Đặng Lam Sơn | B2405134   | Ca chiều T7 [13h30-18h] | Media    |       |
+```cmd
+python benchmarks\soft_penalty_sweep_multi.py --population 120 --generations 30 --runs 60
+```
 
-**Sheet 2: Interviewers**
-
-| Full Name      | Email       | Position | Available Time | Preferred Room | Max Slots |
-| -------------- | ----------- | -------- | -------------- | -------------- | --------- |
-| Nguyễn Thị Thu | thu@club.vn | Media    | 13h30-18h      | P.201          | 6         |
-
-**Sheet 3: Rooms**
-
-| Room Code | Room Name         | Start Time | End Time | Preferred Position |
-| --------- | ----------------- | ---------- | -------- | ------------------ |
-| P.201     | Phòng 201 - Khu B | 13:30      | 18:00    | Media              |
-
-### 5.2. Import vào hệ thống
-
-1. Vào **Data Management**
-2. Click **Import Excel**
-3. Chọn file và upload
-4. Kiểm tra dữ liệu đã import
+Lưu ý: chạy các script lớn nên đảm bảo venv active và biến môi trường (ví dụ MONGODB_URI) đã set.
 
 ---
 
-## 🧬 Bước 6: Run Algorithm
+## 6 — Troubleshooting (những lỗi phổ biến)
 
-1. Vào **Algorithm Settings**
-2. Chọn thuật toán: GA / Greedy / SA / Compare All
-3. Điều chỉnh parameters (optional)
-4. Click **Run Algorithm**
-5. Xem kết quả
+- MongoDB connection timeout (`pymongo.errors.ServerSelectionTimeoutError`):
 
----
+  - Kiểm tra `MONGODB_URI` trong `.env`.
+  - Kiểm tra Network Access trên MongoDB Atlas (whitelist IP hoặc 0.0.0.0/0 cho dev).
+  - Kiểm tra user/password và tên DB `MONGODB_NAME`.
 
-## 🐛 Troubleshooting
+- CORS error: `Access to XMLHttpRequest blocked by CORS policy`:
 
-### Lỗi MongoDB Connection
+  - Đảm bảo `CORS_ALLOWED_ORIGINS` chứa địa chỉ frontend (http://localhost:5173 hoặc http://localhost:3000).
 
-```
-pymongo.errors.ServerSelectionTimeoutError
-```
+- Port đã dùng (Windows):
 
-**Giải pháp:**
-
-- Kiểm tra MongoDB URI trong `.env`
-- Kiểm tra Network Access (Whitelist IP)
-- Kiểm tra database user credentials
-
-### Lỗi CORS
-
-```
-Access to XMLHttpRequest blocked by CORS policy
-```
-
-**Giải pháp:**
-
-- Kiểm tra `CORS_ALLOWED_ORIGINS` trong `backend/.env`
-- Thêm frontend URL vào settings
-
-### Lỗi Port đã được sử dụng
-
-**Backend (8000):**
-
-```bash
-# Windows
+```cmd
 netstat -ano | findstr :8000
 taskkill /PID <PID> /F
-
-# Linux/Mac
-lsof -ti:8000 | xargs kill -9
 ```
 
-**Frontend (3000):**
+- Nếu frontend báo thiếu package hoặc lỗi node_modules:
 
-```bash
-# Chọn port khác khi Vite hỏi
-# Hoặc edit vite.config.js: server: { port: 3001 }
-```
-
-### Lỗi Import Django/React
-
-**Django:**
-
-```bash
-pip install --upgrade pip
-pip install -r requirements.txt --force-reinstall
-```
-
-**React:**
-
-```bash
-rm -rf node_modules package-lock.json
+```cmd
+// Xoá node_modules + lockfile rồi cài lại
+rmdir /S /Q node_modules
+del package-lock.json
 npm install
 ```
 
 ---
 
-## 📝 Development Commands
+## 7 — Production checklist (tóm tắt)
 
-### Backend
-
-```bash
-# Run server
-python manage.py runserver
-
-# Run tests
-python manage.py test
-
-# Create migrations
-python manage.py makemigrations
-
-# Apply migrations
-python manage.py migrate
-
-# Shell
-python manage.py shell
-```
-
-### Frontend
-
-```bash
-# Development server
-npm run dev
-
-# Build for production
-npm run build
-
-# Preview production build
-npm run preview
-
-# Lint code
-npm run lint
-```
+- Set `DEBUG=False` và cấu hình `ALLOWED_HOSTS`.
+- Đảm bảo các secret/credentials được lưu an toàn (env vars, vault).
+- Chạy `python manage.py collectstatic` nếu dùng static files.
+- Dùng Gunicorn / uWSGI + reverse proxy (nginx) cho Django; phục vụ frontend từ CDN hoặc static host.
 
 ---
 
-## 🔧 Cấu hình Production
+## 8 — Tài nguyên & hỗ trợ
 
-### Backend (Django)
-
-1. Set `DEBUG=False` trong `.env`
-2. Configure `ALLOWED_HOSTS`
-3. Collect static files: `python manage.py collectstatic`
-4. Use production-ready server (Gunicorn):
-   ```bash
-   pip install gunicorn
-   gunicorn interview_scheduler.wsgi:application
-   ```
-
-### Frontend (React)
-
-```bash
-npm run build
-```
-
-Deploy thư mục `dist/` lên hosting (Vercel, Netlify, etc.)
+- API docs: `http://localhost:8000/api/docs/`
+- Admin: `http://localhost:8000/admin/`
+- Issues/Support: https://github.com/Yukichi-Cat-Can-Code/Schedule_binding_Interviews/issues
 
 ---
 
-## 🎓 Next Steps
-
-1. ✅ Import dữ liệu mẫu
-2. ✅ Chạy Genetic Algorithm
-3. ✅ So sánh với Greedy và SA
-4. ✅ Xem Timeline và Conflicts
-5. ✅ Phân tích kết quả trong Comparison
-
----
-
-## 💡 Tips
-
-- **MongoDB Atlas Free Tier**: Giới hạn 512MB, đủ cho development
-- **Adaptive Mutation**: GA tự động tăng mutation rate khi stuck
-- **Elitism**: Top 10% cá thể tốt nhất luôn được giữ lại
-- **Heuristic Init**: 60% population được init thông minh → hội tụ nhanh hơn
-
----
-
-## 📞 Support
-
-Nếu gặp vấn đề:
-
-1. Check console logs (F12)
-2. Check backend terminal
-3. Xem API docs: `http://localhost:8000/api/docs/`
-4. Contact: [GitHub Issues](https://github.com/Yukichi-Cat-Can-Code/Schedule_binding_Interviews/issues)
-
----
-
-**Chúc bạn code vui vẻ! 🚀**
+Nếu bạn muốn, tôi có thể: chạy tests (backend/frontend) ở môi trường hiện tại, hoặc tạo tập lệnh `run-dev.bat` / `run-dev.sh` để khởi động cả backend + frontend cùng lúc. Muốn tôi làm tiếp không?

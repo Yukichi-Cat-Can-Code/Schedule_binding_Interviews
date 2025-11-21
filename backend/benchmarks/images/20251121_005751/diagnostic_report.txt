@@ -1,0 +1,3 @@
+Diagnostic run
+CSV rows: 50
+Log findings (best_fitness >= 0.995): 0

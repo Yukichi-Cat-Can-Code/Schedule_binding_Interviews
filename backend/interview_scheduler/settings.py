@@ -30,7 +30,6 @@ INSTALLED_APPS = [
     
     # Third party apps
     'rest_framework',
-    'corsheaders',
     'drf_spectacular',
     
     # Local apps
@@ -40,10 +39,9 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
-    'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
-    'django.middleware.csrf.CsrfViewMiddleware',
+    # CSRF middleware removed for local dev convenience (re-add in prod)
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
@@ -130,16 +128,8 @@ REST_FRAMEWORK = {
     'PAGE_SIZE': 100,
 }
 
-# CORS Settings
-CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:3000').split(',')
-CORS_ALLOW_CREDENTIALS = True
-# Expose filename header for downloads (so frontend can read it)
-CORS_EXPOSE_HEADERS = [
-    'Content-Disposition',
-]
-
-# CSRF - trust local dev frontend
-CSRF_TRUSTED_ORIGINS = os.getenv('CSRF_TRUSTED_ORIGINS', 'http://localhost:3000').split(',')
+# NOTE: CORS middleware and strict CSRF settings removed for local development
+# If deploying to production, restore `corsheaders` and CSRF protections.
 
 # Spectacular Settings (API Documentation)
 SPECTACULAR_SETTINGS = {

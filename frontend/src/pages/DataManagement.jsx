@@ -18,25 +18,13 @@ const DataManagement = () => {
   const [isUploading, setIsUploading] = useState(false);
   const { companyId: authCompanyId, company } = useCurrentCompany();
   // Selected session (user choice) separate from active session flag
-  const [selectedSessionId, setSelectedSessionId] = useState(
-    () => localStorage.getItem("selected_session") || null
-  );
-  // Company selection is always driven from authCompanyId (current company)
-  const [selectedCompanyId, setSelectedCompanyId] = useState("");
+  const [selectedSessionId, setSelectedSessionId] = useState(null);
 
-  // Companies list for selector
-  const { data: companies } = useQuery({
-    queryKey: ["companies"],
-    queryFn: () => companiesAPI.getAll().then((r) => r.data),
-  });
-
-  // Keep selectedCompanyId in sync with current auth company
+  // Keep company strictly tied to authCompanyId; clean old keys
   useEffect(() => {
     if (!authCompanyId) return;
-    // Clean up old localStorage keys that may conflict
     localStorage.removeItem("selectedCompany");
     localStorage.removeItem("company_id");
-    setSelectedCompanyId(authCompanyId);
   }, [authCompanyId]);
   const queryClient = useQueryClient();
   // Active session (backend-defined current session)
@@ -51,12 +39,9 @@ const DataManagement = () => {
 
   // All sessions for user selection, filtered by selected company
   const { data: allSessions } = useQuery({
-    queryKey: ["sessions", selectedCompanyId],
-    enabled: !!selectedCompanyId,
-    queryFn: () =>
-      sessionsAPI
-        .getAll({ company_id: selectedCompanyId })
-        .then((res) => res.data),
+    queryKey: ["sessions", authCompanyId],
+    enabled: !!authCompanyId,
+    queryFn: () => sessionsAPI.getAll().then((res) => res.data),
   });
 
   // No auto-select session here; user chooses explicitly.
@@ -126,9 +111,7 @@ const DataManagement = () => {
         if (m && m[1]) filename = m[1];
       }
       if (!filename) {
-        const companyName =
-          (companies || []).find((c) => c._id === selectedCompanyId)?.name ||
-          "Company";
+        const companyName = company?.name || "Company";
         const period = `${selectedSession.start_date}_${selectedSession.end_date}`;
         // Use double underscore as separators to match backend
         filename = `${
@@ -170,17 +153,13 @@ const DataManagement = () => {
             <select
               className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               value={selectedSessionId || ""}
-              disabled={!selectedCompanyId}
+              disabled={!authCompanyId}
               onChange={(e) => {
                 const val = e.target.value || null;
                 setSelectedSessionId(val);
-                if (val) localStorage.setItem("selected_session", val);
-                else localStorage.removeItem("selected_session");
               }}
             >
-              <option value="">
-                {selectedCompanyId ? "Select session" : "Select company first"}
-              </option>
+              <option value="">Select session</option>
               {allSessions?.map((s) => (
                 <option key={s._id} value={s._id}>
                   {s.code || s.name} {s.is_active ? "(active)" : ""}
@@ -268,7 +247,7 @@ const DataManagement = () => {
           <PositionsTable selectedSession={selectedSession} />
         )}
         {activeTab === "sessions" && (
-          <SessionsTable companyId={selectedCompanyId} />
+          <SessionsTable companyId={authCompanyId} />
         )}
       </div>
 
