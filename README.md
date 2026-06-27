@@ -407,14 +407,10 @@ type .env  # Windows
 ## 👥 Team
 
 **CTU AI Fundamental Course 2025**
-
-- Instructor: [Tên giảng viên]
-- Students: [Danh sách sinh viên]
+- Students: Mai Nhật Minh
 
 ## 📄 License
 
 This project is for educational purposes - CTU AI Fundamental Course 2025.
 
 ---
-
-**Made with ❤️ by CTU Students**
